@@ -26,9 +26,7 @@ class Config:
     HORIZON_URL: str = os.getenv("HORIZON_URL", "https://horizon.stellar.org")
     STELLAR_NETWORK: str = os.getenv("STELLAR_NETWORK", "PUBLIC")
 
-    WATCHED_ASSET_PAIRS: list[tuple[str, str]] = _parse_pairs(
-        os.getenv("WATCHED_ASSET_PAIRS", "")
-    )
+    WATCHED_ASSET_PAIRS: list[tuple[str, str]] = _parse_pairs(os.getenv("WATCHED_ASSET_PAIRS", ""))
 
     BENFORD_WINDOWS_HOURS: list[int] = _parse_int_list(
         os.getenv("BENFORD_WINDOWS_HOURS", "1,4,24,168,720")
@@ -39,6 +37,11 @@ class Config:
     RISK_SCORE_DB_URL: str = os.getenv("RISK_SCORE_DB_URL", "sqlite:///ledgerlens.db")
 
     MODEL_DIR: str = os.getenv("MODEL_DIR", "./models")
+
+    # ledgerlens-score Soroban contract
+    SOROBAN_RPC_URL: str = os.getenv("SOROBAN_RPC_URL", "https://soroban-testnet.stellar.org")
+    LEDGERLENS_CONTRACT_ID: str = os.getenv("LEDGERLENS_CONTRACT_ID", "")
+    LEDGERLENS_SUBMITTER_SECRET: str = os.getenv("LEDGERLENS_SUBMITTER_SECRET", "")
 
 
 config = Config()
