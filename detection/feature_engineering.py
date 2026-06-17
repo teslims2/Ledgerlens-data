@@ -211,7 +211,9 @@ def compute_cross_asset_features(
     # Ensure we have a pair_id column; if not, infer from base/counter assets
     if "pair_id" not in wallet_trades.columns:
         wallet_trades["pair_id"] = (
-            wallet_trades["base_asset"].astype(str) + "/" + wallet_trades["counter_asset"].astype(str)
+            wallet_trades["base_asset"].astype(str)
+            + "/"
+            + wallet_trades["counter_asset"].astype(str)
         )
 
     n_pairs = wallet_trades["pair_id"].nunique()
@@ -237,7 +239,9 @@ def compute_cross_asset_features(
         if len(other_pairs) > 1:
             synchrony_count += 1
 
-    features["cross_pair_trade_synchrony"] = float(synchrony_count / len(wallet_trades)) if wallet_trades else 0.0
+    features["cross_pair_trade_synchrony"] = (
+        float(synchrony_count / len(wallet_trades)) if wallet_trades else 0.0
+    )
 
     # Feature 2: net_asset_flow_deviation
     # Compute net flow for each asset; deviation = max(|net_flow|) / total_volume
@@ -269,9 +273,7 @@ def compute_cross_asset_features(
         total_volume += amount
 
     max_net_flow = max((abs(flow) for flow in net_flows.values()), default=0.0)
-    features["net_asset_flow_deviation"] = (
-        max_net_flow / total_volume if total_volume > 0 else 1.0
-    )
+    features["net_asset_flow_deviation"] = max_net_flow / total_volume if total_volume > 0 else 1.0
 
     # Feature 3: cross_pair_counterparty_overlap
     # Jaccard similarity of counterparty sets across pairs
@@ -293,7 +295,9 @@ def compute_cross_asset_features(
         set2 = counterparties_by_pair[pairs_list[1]]
         intersection = len(set1 & set2)
         union = len(set1 | set2)
-        features["cross_pair_counterparty_overlap"] = float(intersection / union) if union > 0 else 0.0
+        features["cross_pair_counterparty_overlap"] = (
+            float(intersection / union) if union > 0 else 0.0
+        )
     else:
         features["cross_pair_counterparty_overlap"] = 0.0
 
@@ -314,7 +318,9 @@ def compute_cross_asset_features(
         aligned_idx = volumes_1.index.intersection(volumes_2.index)
         if len(aligned_idx) > 1:
             correlation = float(volumes_1[aligned_idx].corr(volumes_2[aligned_idx]))
-            features["cross_pair_volume_correlation"] = correlation if not pd.isna(correlation) else 0.0
+            features["cross_pair_volume_correlation"] = (
+                correlation if not pd.isna(correlation) else 0.0
+            )
         else:
             features["cross_pair_volume_correlation"] = 0.0
     else:
@@ -340,7 +346,9 @@ def compute_cross_asset_features(
         metrics = compute_benford_metrics_for_windows(pair_trades)
         # Average MAD across all windows for this pair
         per_pair_metrics[pair_id] = {
-            "mad": sum(m.get("mad", 0.0) for m in metrics.values()) / len(metrics) if metrics else 0.0
+            "mad": (
+                sum(m.get("mad", 0.0) for m in metrics.values()) / len(metrics) if metrics else 0.0
+            )
         }
 
     features["cross_pair_mad_std"] = cross_pair_benford_consistency(per_pair_metrics)
