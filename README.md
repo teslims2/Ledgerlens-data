@@ -125,6 +125,7 @@ ledgerlens-data/
 │   ├── horizon_streamer.py           ← Real-time trade data from Horizon API
 │   ├── historical_loader.py          ← Bulk historical trade ingestion
 │   ├── orderbook_loader.py           ← Order-book event ingestion (cancellation rate)
+│   ├── account_activity_loader.py    ← Account creation/funding event ingestion (funding graph)
 │   └── data_models.py                ← Pydantic schemas for trade records
 │
 ├── detection/
@@ -238,6 +239,7 @@ full pipeline diagram, threading model, and latency budget.
 | `--since <ISO date>` | Only load trades from this date onward (default: all available) |
 | `--no-persist` | Skip writing scored wallets to `RISK_SCORE_DB_URL` |
 | `--no-orderbook` | Skip loading order-book events (faster; `order_cancellation_rate` stays `0`) |
+| `--no-graph` | Skip loading account activity and building the wallet funding graph (faster; `funding_source_similarity` and `network_centrality` stay `0`) |
 | `--submit-onchain` | Submit flagged wallets' `RiskScore` to the `ledgerlens-score` contract via `integrations/contract_client.py` |
 | `--dry-run` | Run all pipeline stages but skip every write — no DB persistence and no on-chain submission (implies `--no-persist`; silently skips `--submit-onchain`). Flagged wallets are still printed. |
 
@@ -470,12 +472,6 @@ ledgerlens-data/
 
 #### Known gaps / TODOs
 
-- Wallet funding-graph features (`funding_source_similarity`,
-  `network_centrality`) are implemented in `detection/wallet_graph.py`, but
-  `run_pipeline.py` doesn't build a `funding_graph` yet — there's no
-  ingestion source for `AccountActivity.funding_account` data. Wiring this
-  up requires an account-creation/funding event loader (a candidate next
-  feature).
 - `model_training.py` trains on `scripts/generate_synthetic_dataset.py`'s
   synthetic data by default; the real labelled wash-trade dataset is still
   the "Open dataset release" roadmap item.
