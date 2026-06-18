@@ -77,7 +77,7 @@ Benford signals alone aren't definitive — legitimate high-frequency market mak
 
 ## Machine Learning Layer
 
-### Features (30+, grouped by category)
+### Features (36+, grouped by category)
 
 **Benford Features (15)**
 - Chi-square, Z-score, and MAD for transaction amounts across 5 rolling time windows
@@ -98,6 +98,14 @@ Benford signals alone aren't definitive — legitimate high-frequency market mak
 - Funding source similarity score
 - Network centrality within trading cluster graphs
 - Account age at time of trading activity
+
+**Cross-Asset Coordination Features (6)**
+- **Cross-pair trade synchrony** (0–1): Fraction of trades where the wallet simultaneously trades on other pairs within a configurable synchrony window (default: 30 seconds). High values indicate coordinated multi-pair activity — a strong wash-trading signal.
+- **Net asset flow deviation** (0–1+): Maximum absolute net asset flow normalized by total volume. Values close to 0 indicate closed-cycle trading (suspect); large values indicate genuine inventory management.
+- **Cross-pair counterparty overlap** (0–1): Jaccard similarity of the wallet's counterparty sets across different pairs. Wash traders reuse the same sock-puppet wallets across pairs; legitimate market makers have pair-specific counterparties.
+- **Cross-pair volume correlation** (-1 to 1): Pearson correlation of trade volumes across pairs, bucketed by minute. Coordinated wash traders' volumes spike together; legitimate traders' pair-specific volumes are uncorrelated.
+- **Pair diversity score** (0–1): Shannon entropy of volume distribution across pairs, normalized. High entropy = volume spread across many pairs (market maker); low entropy = concentrated on one or two pairs.
+- **Cross-pair MAD consistency**: Standard deviation of Benford MAD scores across pairs. Low values mean all pairs have similar Benford conformity (consistent wash-trading pattern). High values indicate mixed conformity (concentrated on specific pairs).
 
 ### Models
 
@@ -228,6 +236,7 @@ python -m scripts.stream --alert-channel websocket
 | `WS_PORT` | `8765` | WebSocket server port |
 | `WS_BIND_HOST` | `127.0.0.1` | WebSocket bind address (loopback by default) |
 | `WS_ALLOW_EXTERNAL` | — | Set to `1` to allow non-loopback WebSocket binding |
+| `CROSS_PAIR_SYNCHRONY_WINDOW_SECONDS` | `30` | Time window (seconds) for detecting simultaneous trades across pairs |
 
 See [docs/streaming_architecture.md](docs/streaming_architecture.md) for the
 full pipeline diagram, threading model, and latency budget.
@@ -436,13 +445,15 @@ API path parameters, contract `Symbol` arguments, and dashboard routing.
 
 #### Feature schema
 
-The 30+ feature columns produced by
+The 36+ feature columns produced by
 `detection/feature_engineering.py::build_feature_matrix` are the training
 input for `detection/model_training.py`. Any new feature column must be
 added to both the training pipeline and `model_inference.py`'s
 `FEATURE_COLUMNS_EXCLUDE`-aware scoring path, and documented in
 `ledgerlens-core` if other repos need to display feature attributions
-(SHAP output from `detection/shap_explainer.py`).
+(SHAP output from `detection/shap_explainer.py`). Cross-asset coordination
+features require that `all_pairs_df` be passed to `build_feature_matrix`;
+if not provided, these features default to 0.0.
 
 ### This Repo (`ledgerlens-data`) — Current State
 

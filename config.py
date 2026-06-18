@@ -32,6 +32,10 @@ class Config:
         os.getenv("BENFORD_WINDOWS_HOURS", "1,4,24,168,720")
     )
 
+    CROSS_PAIR_SYNCHRONY_WINDOW_SECONDS: int = int(
+        os.getenv("CROSS_PAIR_SYNCHRONY_WINDOW_SECONDS", "30")
+    )
+
     RISK_SCORE_FLAG_THRESHOLD: int = int(os.getenv("RISK_SCORE_FLAG_THRESHOLD", "70"))
 
     RISK_SCORE_DB_URL: str = os.getenv("RISK_SCORE_DB_URL", "sqlite:///ledgerlens.db")
