@@ -4,17 +4,17 @@ Usage:
     python run_pipeline.py --since 2024-01-01
 
 Pipeline stages:
-    1. Load historical trades and order-book events for all watched asset
-       pairs (ingestion)
-    2. Load account activity and build the wallet funding graph (optional,
-       skipped with ``--no-graph``)
-    3. Build the per-wallet feature matrix (Benford + ML + order-book features)
-    4. Score each wallet with the trained ensemble (model_inference)
-    5. Persist scored wallets via `RiskScoreStore`, optionally submit flagged
-       wallets on-chain via the `ledgerlens-score` contract, and output those
-       flagged above `config.RISK_SCORE_FLAG_THRESHOLD`
+    1. Load historical trades per asset pair into a dict keyed by pair_id
+    2. For each pair:
+       a. Load order-book events (optional, skipped with ``--no-orderbook``)
+       b. Load account activity and build the wallet funding graph (optional,
+          skipped with ``--no-graph``)
+       c. Build the per-wallet feature matrix
+       d. Score each wallet with the trained ensemble (model_inference)
+       e. Persist one RiskScore record per (wallet, pair_id) and optionally
+          submit flagged wallets on-chain
 
-Stage 4 requires trained models in `config.MODEL_DIR` — run
+Stage 2d requires trained models in `config.MODEL_DIR` — run
 `detection/model_training.py` against a labelled dataset first. Until
 models are trained, this script falls back to reporting Benford-only flags
 (and persistence is skipped, since the `RiskScore` shape isn't available).
@@ -31,7 +31,7 @@ from detection.feature_engineering import build_feature_matrix
 from detection.risk_score_store import RiskScoreStore
 from detection.wallet_graph import build_funding_graph
 from ingestion.account_activity_loader import load_accounts_activity
-from ingestion.historical_loader import load_watched_pairs_to_dataframe
+from ingestion.historical_loader import load_pair_to_dataframe
 from ingestion.orderbook_loader import load_accounts_orderbook_events
 from utils.logging import get_logger
 
@@ -81,78 +81,94 @@ def main() -> None:
     if args.dry_run:
         logger.info("[DRY RUN] No data will be written.")
 
-    logger.info("[1/5] Loading trades for watched pairs: %s", config.WATCHED_ASSET_PAIRS)
-    trades_df = load_watched_pairs_to_dataframe(start_time=args.since)
-    logger.info("      Loaded %d trades", len(trades_df))
+    xlm = SdkAsset.native()
 
-    orderbook_events = None
-    if not args.no_orderbook and not trades_df.empty:
-        logger.info("[2/5] Loading order-book events")
-        wallets = pd.unique(trades_df[["base_account", "counter_account"]].values.ravel())
-        orderbook_events = load_accounts_orderbook_events(list(wallets))
-        logger.info("      Loaded %d order-book events", len(orderbook_events))
+    # --- Stage 1: load trades per pair ---
+    logger.info("[1] Loading trades per pair: %s", config.WATCHED_ASSET_PAIRS)
+    pairs_df: dict[str, pd.DataFrame] = {}
+    for code, issuer in config.WATCHED_ASSET_PAIRS:
+        asset = xlm if issuer == "native" else SdkAsset(code, issuer)
+        if asset == xlm:
+            continue
+        pair_id = f"{code}:{issuer}/XLM:native"
+        logger.info("    Loading pair %s", pair_id)
+        pairs_df[pair_id] = load_pair_to_dataframe(asset, xlm, start_time=args.since)
+        logger.info("    Loaded %d trades for %s", len(pairs_df[pair_id]), pair_id)
 
-    funding_graph = None
-    if not args.no_graph and not trades_df.empty:
-        logger.info("[3/5] Loading account activity and building funding graph")
-        wallets = pd.unique(trades_df[["base_account", "counter_account"]].values.ravel())
-        activities = load_accounts_activity(list(wallets))
-        funding_graph = build_funding_graph(activities)
-        logger.info(
-            "      Built funding graph: %d nodes, %d edges",
-            funding_graph.number_of_nodes(),
-            funding_graph.number_of_edges(),
-        )
+    if not pairs_df:
+        logger.warning("No pairs configured or all pairs skipped.")
+        return
 
-    logger.info("[4/5] Building feature matrix")
-    feature_matrix = build_feature_matrix(
-        trades_df, orderbook_events=orderbook_events, funding_graph=funding_graph
-    )
-    logger.info("      Built features for %d wallets", len(feature_matrix))
+    all_flagged: list[pd.DataFrame] = []
+    store = RiskScoreStore() if not args.no_persist and not args.dry_run else None
 
-    logger.info("[5/5] Scoring wallets")
-    try:
-        from detection.model_inference import RiskScorer
+    for pair_id, trades_df in pairs_df.items():
+        logger.info("[pair=%s] Processing", pair_id)
 
-        scorer = RiskScorer()
-        scored = scorer.score_matrix(feature_matrix)
-    except (RuntimeError, ImportError) as exc:
-        logger.warning("      Skipping ML scoring: %s", exc)
-        logger.warning("      Falling back to Benford-only flags")
-        mad_cols = [c for c in feature_matrix.columns if c.startswith("benford_mad_")]
-        scored = feature_matrix[["wallet"] + mad_cols].copy()
-        scored["benford_flag"] = (scored[mad_cols] > 0.015).any(axis=1)
+        if trades_df.empty:
+            logger.info("[pair=%s] No trades — skipping", pair_id)
+            continue
 
-    if "score" in scored:
-        flagged = scored[scored["score"] >= config.RISK_SCORE_FLAG_THRESHOLD]
+        wallets = list(pd.unique(trades_df[["base_account", "counter_account"]].values.ravel()))
 
-        if not args.no_persist and not args.dry_run:
-            asset_pair = watched_pairs_label()
-            store = RiskScoreStore()
-            for _, row in scored.iterrows():
-                store.upsert(
-                    wallet=row["wallet"],
-                    asset_pair=asset_pair,
-                    risk_score={
-                        "score": row["score"],
-                        "benford_flag": row["benford_flag"],
-                        "ml_flag": row["ml_flag"],
-                        "confidence": row["confidence"],
-                    },
-                )
+        # --- Stage 2a: order-book events ---
+        orderbook_events = None
+        if not args.no_orderbook:
+            logger.info("[pair=%s] Loading order-book events", pair_id)
+            orderbook_events = load_accounts_orderbook_events(wallets)
+            logger.info("[pair=%s] Loaded %d order-book events", pair_id, len(orderbook_events))
+
+        # --- Stage 2b: funding graph ---
+        funding_graph = None
+        if not args.no_graph:
+            logger.info("[pair=%s] Loading account activity and building funding graph", pair_id)
+            activities = load_accounts_activity(wallets)
+            funding_graph = build_funding_graph(activities)
             logger.info(
-                "      Persisted %d scored wallets to %s", len(scored), config.RISK_SCORE_DB_URL
+                "[pair=%s] Funding graph: %d nodes, %d edges",
+                pair_id,
+                funding_graph.number_of_nodes(),
+                funding_graph.number_of_edges(),
             )
-    else:
-        flagged = scored[scored["benford_flag"]]
 
-    logger.info("Flagged wallets (%d):\n%s", len(flagged), flagged)
+        # --- Stage 2c: feature matrix ---
+        logger.info("[pair=%s] Building feature matrix", pair_id)
+        feature_matrix = build_feature_matrix(
+            trades_df, orderbook_events=orderbook_events, funding_graph=funding_graph
+        )
+        logger.info("[pair=%s] Built features for %d wallets", pair_id, len(feature_matrix))
 
-    if args.submit_onchain:
-        if args.dry_run:
-            logger.warning("      [DRY RUN] Skipping on-chain submission")
-        elif "score" not in scored:
-            logger.warning("      Skipping on-chain submission: no ML scores available")
+        # --- Stage 2d: scoring ---
+        logger.info("[pair=%s] Scoring wallets", pair_id)
+        try:
+            from detection.model_inference import RiskScorer
+
+            scorer = RiskScorer()
+            scored = scorer.score_matrix(feature_matrix)
+        except (RuntimeError, ImportError) as exc:
+            logger.warning("[pair=%s] Skipping ML scoring: %s", pair_id, exc)
+            logger.warning("[pair=%s] Falling back to Benford-only flags", pair_id)
+            mad_cols = [c for c in feature_matrix.columns if c.startswith("benford_mad_")]
+            scored = feature_matrix[["wallet"] + mad_cols].copy()
+            scored["benford_flag"] = (scored[mad_cols] > 0.015).any(axis=1)
+
+        # --- Stage 2e: persist + flag ---
+        if "score" in scored:
+            flagged = scored[scored["score"] >= config.RISK_SCORE_FLAG_THRESHOLD]
+
+            if store is not None:
+                for _, row in scored.iterrows():
+                    store.upsert(
+                        wallet=row["wallet"],
+                        asset_pair=pair_id,
+                        risk_score={
+                            "score": row["score"],
+                            "benford_flag": row["benford_flag"],
+                            "ml_flag": row["ml_flag"],
+                            "confidence": row["confidence"],
+                        },
+                    )
+                logger.info("[pair=%s] Persisted %d scored wallets", pair_id, len(scored))
         else:
             flagged = scored[scored["benford_flag"]]
 

@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import run_pipeline
 from detection.feature_engineering import build_feature_matrix
 from detection.wallet_graph import build_funding_graph
 from ingestion.account_activity_loader import load_account_activity, load_accounts_activity
@@ -191,13 +192,18 @@ def test_pipeline_no_graph_flag_skips_activity_load():
     sys.modules["detection.model_inference"] = fake_module
     try:
         with (
-            patch("run_pipeline.load_watched_pairs_to_dataframe") as mock_trades,
+            patch("run_pipeline.load_pair_to_dataframe") as mock_trades,
             patch("run_pipeline.load_accounts_orderbook_events"),
             patch("run_pipeline.load_accounts_activity") as mock_activity,
             patch("run_pipeline.build_feature_matrix") as mock_feat,
             patch("run_pipeline.RiskScoreStore"),
+            patch.object(
+                run_pipeline.config,
+                "WATCHED_ASSET_PAIRS",
+                [("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")],
+            ),
         ):
-            mock_trades.return_value = pd.DataFrame()
+            mock_trades.return_value = scored_df
             mock_feat.return_value = scored_df
 
             sys.argv = ["run_pipeline.py", "--no-graph", "--no-persist"]
