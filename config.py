@@ -55,12 +55,6 @@ class Config:
     WS_BIND_HOST: str = os.getenv("WS_BIND_HOST", "127.0.0.1")
     WS_ALLOW_EXTERNAL: bool = os.getenv("WS_ALLOW_EXTERNAL", "") == "1"
 
-    def validate(self, require_onchain: bool = True) -> None:
-        """Raise ValueError if required config is missing."""
-        if not self.WATCHED_ASSET_PAIRS:
-            raise ValueError("WATCHED_ASSET_PAIRS is not configured")
-        if require_onchain and not self.LEDGERLENS_CONTRACT_ID:
-            raise ValueError("LEDGERLENS_CONTRACT_ID is not configured")
 
 
     @classmethod
