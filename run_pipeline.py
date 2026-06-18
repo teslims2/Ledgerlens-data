@@ -6,20 +6,18 @@ Usage:
 Pipeline stages:
     1. Load historical trades and order-book events for all watched asset
        pairs (ingestion)
-    2. Build the per-wallet feature matrix (Benford + ML + order-book features)
-    3. Score each wallet with the trained ensemble (model_inference)
-    4. Persist scored wallets via `RiskScoreStore`, optionally submit flagged
+    2. Load account activity and build the wallet funding graph (optional,
+       skipped with ``--no-graph``)
+    3. Build the per-wallet feature matrix (Benford + ML + order-book features)
+    4. Score each wallet with the trained ensemble (model_inference)
+    5. Persist scored wallets via `RiskScoreStore`, optionally submit flagged
        wallets on-chain via the `ledgerlens-score` contract, and output those
        flagged above `config.RISK_SCORE_FLAG_THRESHOLD`
 
-Stage 3 requires trained models in `config.MODEL_DIR` — run
+Stage 4 requires trained models in `config.MODEL_DIR` — run
 `detection/model_training.py` against a labelled dataset first. Until
 models are trained, this script falls back to reporting Benford-only flags
 (and persistence is skipped, since the `RiskScore` shape isn't available).
-
-Wallet funding-graph features (`funding_source_similarity`,
-`network_centrality`) require an `AccountActivity` feed, which has no
-ingestion source yet, so `funding_graph` is not threaded through here.
 """
 
 import argparse
@@ -30,6 +28,8 @@ import pandas as pd
 from config import config
 from detection.feature_engineering import build_feature_matrix
 from detection.risk_score_store import RiskScoreStore
+from detection.wallet_graph import build_funding_graph
+from ingestion.account_activity_loader import load_accounts_activity
 from ingestion.historical_loader import load_watched_pairs_to_dataframe
 from ingestion.orderbook_loader import load_accounts_orderbook_events
 from utils.logging import get_logger
@@ -68,6 +68,12 @@ def parse_args() -> argparse.Namespace:
         help="Skip loading order-book events (faster, but order_cancellation_rate stays 0)",
     )
     parser.add_argument(
+        "--no-graph",
+        action="store_true",
+        help="Skip loading account activity and building the funding graph (faster, but "
+        "funding_source_similarity and network_centrality stay 0)",
+    )
+    parser.add_argument(
         "--submit-onchain",
         action="store_true",
         help="Submit flagged wallets' RiskScore to the ledgerlens-score contract",
@@ -86,22 +92,36 @@ def main() -> None:
     if args.dry_run:
         logger.info("[DRY RUN] No data will be written.")
 
-    logger.info("[1/4] Loading trades for watched pairs: %s", config.WATCHED_ASSET_PAIRS)
+    logger.info("[1/5] Loading trades for watched pairs: %s", config.WATCHED_ASSET_PAIRS)
     trades_df = load_watched_pairs_to_dataframe(start_time=args.since)
     logger.info("      Loaded %d trades", len(trades_df))
 
     orderbook_events = None
     if not args.no_orderbook and not trades_df.empty:
-        logger.info("[2/4] Loading order-book events")
+        logger.info("[2/5] Loading order-book events")
         wallets = pd.unique(trades_df[["base_account", "counter_account"]].values.ravel())
         orderbook_events = load_accounts_orderbook_events(list(wallets))
         logger.info("      Loaded %d order-book events", len(orderbook_events))
 
-    logger.info("[3/4] Building feature matrix")
-    feature_matrix = build_feature_matrix(trades_df, orderbook_events=orderbook_events)
+    funding_graph = None
+    if not args.no_graph and not trades_df.empty:
+        logger.info("[3/5] Loading account activity and building funding graph")
+        wallets = pd.unique(trades_df[["base_account", "counter_account"]].values.ravel())
+        activities = load_accounts_activity(list(wallets))
+        funding_graph = build_funding_graph(activities)
+        logger.info(
+            "      Built funding graph: %d nodes, %d edges",
+            funding_graph.number_of_nodes(),
+            funding_graph.number_of_edges(),
+        )
+
+    logger.info("[4/5] Building feature matrix")
+    feature_matrix = build_feature_matrix(
+        trades_df, orderbook_events=orderbook_events, funding_graph=funding_graph
+    )
     logger.info("      Built features for %d wallets", len(feature_matrix))
 
-    logger.info("[4/4] Scoring wallets")
+    logger.info("[5/5] Scoring wallets")
     try:
         from detection.model_inference import RiskScorer
 
