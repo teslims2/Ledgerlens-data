@@ -10,6 +10,9 @@ from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
+
+from config import Config
 
 import run_pipeline
 
@@ -80,3 +83,11 @@ def test_dry_run_log_banner(caplog):
     with caplog.at_level(logging.INFO):
         _run_dry_run(["--dry-run", "--no-orderbook"])
     assert "[DRY RUN] No data will be written." in caplog.text
+
+
+def test_validate_passes_with_required_vars_set(monkeypatch):
+    monkeypatch.setattr(Config, "WATCHED_ASSET_PAIRS", [("XLM", "native")])
+    monkeypatch.setattr(Config, "RISK_SCORE_DB_URL", "sqlite:///test.db")
+    monkeypatch.setattr(Config, "MODEL_DIR", "./models")
+
+    Config.validate()
