@@ -33,6 +33,7 @@ def generate_synthetic_dataset(n_wallets: int = 500, seed: int = 42) -> pd.DataF
         is_wash = i >= n_legit
         row = {"wallet": f"GSYNTH{i:06d}"}
 
+        # Raw Benford features — one group per window (matches compute_benford_features order)
         for hours in config.BENFORD_WINDOWS_HOURS:
             if is_wash:
                 row[f"benford_chi_square_{hours}h"] = rng.uniform(20, 100)
@@ -42,6 +43,16 @@ def generate_synthetic_dataset(n_wallets: int = 500, seed: int = 42) -> pd.DataF
                 row[f"benford_chi_square_{hours}h"] = rng.uniform(0, 10)
                 row[f"benford_mad_{hours}h"] = rng.uniform(0.0, 0.014)
                 row[f"benford_z_max_{hours}h"] = rng.uniform(0, 2)
+
+        # Residual Benford features (after STL seasonal stripping) — appended
+        # after all raw features to match build_feature_vector column order.
+        for hours in config.BENFORD_WINDOWS_HOURS:
+            if is_wash:
+                row[f"benford_residual_chi_square_{hours}h"] = rng.uniform(15, 80)
+                row[f"benford_residual_mad_{hours}h"] = rng.uniform(0.018, 0.07)
+            else:
+                row[f"benford_residual_chi_square_{hours}h"] = rng.uniform(0, 8)
+                row[f"benford_residual_mad_{hours}h"] = rng.uniform(0.0, 0.012)
 
         if is_wash:
             row["counterparty_concentration_ratio"] = rng.uniform(0.7, 1.0)

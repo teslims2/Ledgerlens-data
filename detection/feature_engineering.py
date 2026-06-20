@@ -27,11 +27,16 @@ from detection.wallet_graph import compute_wallet_graph_metrics
 from ingestion.data_models import AccountActivity
 
 
-def compute_benford_features(wallet_trades: pd.DataFrame) -> dict:
+def compute_benford_features(wallet_trades: pd.DataFrame, decompose: bool = True) -> dict:
     """Flatten per-window Benford metrics into a feature row.
 
-    Produces `benford_chi_square_{h}h`, `benford_mad_{h}h`, and
-    `benford_z_max_{h}h` for each configured window.
+    Produces ``benford_chi_square_{h}h``, ``benford_mad_{h}h``, and
+    ``benford_z_max_{h}h`` for each configured window.  When
+    ``decompose=True``, also adds ``benford_residual_chi_square_{h}h`` and
+    ``benford_residual_mad_{h}h`` — Benford metrics computed on the STL
+    residuals after stripping seasonal and trend components.  Residual
+    features are set to ``NaN`` for windows with insufficient observations
+    for STL decomposition.
     """
     per_window = compute_benford_metrics_for_windows(wallet_trades)
 
@@ -41,7 +46,44 @@ def compute_benford_features(wallet_trades: pd.DataFrame) -> dict:
         features[f"benford_mad_{hours}h"] = metrics["mad"]
         features[f"benford_z_max_{hours}h"] = max(metrics["z_scores"].values(), default=0.0)
 
+    if decompose and not wallet_trades.empty:
+        for hours, res_metrics in _compute_residual_benford_for_windows(wallet_trades).items():
+            features[f"benford_residual_chi_square_{hours}h"] = res_metrics.get(
+                "chi_square", float("nan")
+            )
+            features[f"benford_residual_mad_{hours}h"] = res_metrics.get("mad", float("nan"))
+
     return features
+
+
+def _compute_residual_benford_for_windows(wallet_trades: pd.DataFrame) -> dict[int, dict]:
+    """Compute Benford metrics on STL residuals for each configured window.
+
+    For each window, the trade sub-frame is decomposed via STL and Benford
+    metrics are computed on the absolute residuals.  Returns NaN entries for
+    windows where decomposition is not possible (insufficient data).
+    """
+    from detection.benford_engine import compute_benford_metrics
+    from detection.ts_decomposition import decompose_trade_amounts
+
+    windows_hours = config.BENFORD_WINDOWS_HOURS
+    timestamps = pd.to_datetime(wallet_trades["ledger_close_time"])
+    ref = timestamps.max()
+
+    results: dict[int, dict] = {}
+    for hours in windows_hours:
+        window_start = ref - pd.Timedelta(hours=hours)
+        window_df = wallet_trades[(timestamps > window_start) & (timestamps <= ref)]
+
+        residuals = decompose_trade_amounts(window_df)
+        if residuals is None:
+            results[hours] = {"chi_square": float("nan"), "mad": float("nan")}
+        else:
+            pos_residuals = residuals.abs()
+            pos_residuals = pos_residuals[pos_residuals > 0]
+            results[hours] = compute_benford_metrics(pos_residuals)
+
+    return results
 
 
 def compute_order_cancellation_rate(wallet: str, orderbook_events: pd.DataFrame | None) -> float:

@@ -6,6 +6,7 @@ pandas>=2.1.0
 numpy>=1.26.0
 pydantic>=2.5.0
 networkx>=3.0
+statsmodels>=0.14.0
 
 # Machine learning
 scikit-learn>=1.4.0
