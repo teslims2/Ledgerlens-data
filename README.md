@@ -241,6 +241,42 @@ python -m scripts.stream --alert-channel websocket
 See [docs/streaming_architecture.md](docs/streaming_architecture.md) for the
 full pipeline diagram, threading model, and latency budget.
 
+#### Kafka deployment option (`STREAMING_BACKEND=kafka`)
+
+The default `sse` backend runs one thread per pair in a single process. For
+scale-out, durability, event replay, and backpressure, set
+`STREAMING_BACKEND=kafka` to route trades through Apache Kafka instead. The
+`sse` backend remains the default and is unchanged — operators without Kafka
+need do nothing.
+
+```bash
+# Bring up Zookeeper, Kafka, the producer, 3 scorer replicas, Prometheus + Grafana
+docker-compose up --scale ledgerlens-scorer=3
+```
+
+Architecture: a `HorizonKafkaProducer` serialises each Horizon SSE trade to Avro
+(`data/trade_avro_schema.json`) and produces it to
+`ledgerlens.trades.{asset_pair}`, keyed by `wallet_id` so per-wallet ordering is
+preserved. `KafkaWorker` replicas in the shared `ledgerlens-scorer` consumer
+group consume via a wildcard subscription, score wallets, dispatch alerts, and
+commit offsets only after dispatch (at-least-once). Serialisation failures go to
+a dead-letter queue (`ledgerlens.trades.dlq`); they are never auto-retried.
+
+| Variable | Default | Description |
+|---|---|---|
+| `STREAMING_BACKEND` | `sse` | `sse` (threaded) or `kafka` |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Broker list |
+| `KAFKA_SASL_USERNAME` | — | SASL username (read from env only) |
+| `KAFKA_SASL_PASSWORD` | — | SASL password (read from env only) |
+| `KAFKA_LAG_ALERT_THRESHOLD` | `500` | Consumer lag (messages) that triggers a CRITICAL log |
+
+Each scorer exposes Prometheus metrics (`kafka_lag_by_partition`,
+`scoring_latency_ms`, `alerts_dispatched_total`, `kafka_messages_consumed_total`)
+on `KAFKA_METRICS_PORT` (default `9100`); Grafana ships a pre-configured Kafka
+lag + scoring-latency dashboard. See
+[docs/streaming_architecture.md](docs/streaming_architecture.md#kafka-streaming-backend-issue-36)
+for the Kafka topology, partition strategy, and at-least-once semantics.
+
 ### `run_pipeline.py` flags
 
 | Flag | Effect |

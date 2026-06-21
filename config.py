@@ -50,6 +50,26 @@ class Config:
     MIN_TRADES_FOR_SCORING: int = int(os.getenv("MIN_TRADES_FOR_SCORING", "20"))
 
     # Real-time streaming / alerting
+    # STREAMING_BACKEND selects the ingestion transport:
+    #   "sse"   — existing thread-per-pair Horizon SSE pipeline (default, no Kafka)
+    #   "kafka" — Apache Kafka producer/consumer distributed pipeline
+    STREAMING_BACKEND: str = os.getenv("STREAMING_BACKEND", "sse")
+
+    # Kafka — credentials are read from env vars only, never committed.
+    KAFKA_BOOTSTRAP_SERVERS: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    KAFKA_SASL_USERNAME: str | None = os.getenv("KAFKA_SASL_USERNAME")
+    KAFKA_SASL_PASSWORD: str | None = os.getenv("KAFKA_SASL_PASSWORD")
+    KAFKA_CONSUMER_GROUP: str = os.getenv("KAFKA_CONSUMER_GROUP", "ledgerlens-scorer")
+    KAFKA_TOPIC_PREFIX: str = os.getenv("KAFKA_TOPIC_PREFIX", "ledgerlens.trades")
+    KAFKA_DLQ_TOPIC: str = os.getenv("KAFKA_DLQ_TOPIC", "ledgerlens.trades.dlq")
+    # Regex subscription (librdkafka treats a leading '^' as a pattern). Picks up
+    # new per-pair topics without a consumer restart; the DLQ topic is skipped
+    # in the worker so failed messages are never auto-replayed.
+    KAFKA_TOPIC_PATTERN: str = os.getenv("KAFKA_TOPIC_PATTERN", "^ledgerlens\\.trades\\..*")
+    KAFKA_LAG_ALERT_THRESHOLD: int = int(os.getenv("KAFKA_LAG_ALERT_THRESHOLD", "500"))
+    KAFKA_METRICS_PORT: int = int(os.getenv("KAFKA_METRICS_PORT", "9100"))
+    TRADE_AVRO_SCHEMA_PATH: str = os.getenv("TRADE_AVRO_SCHEMA_PATH", "data/trade_avro_schema.json")
+
     ALERT_CHANNEL: str = os.getenv("ALERT_CHANNEL", "stdout")
     ALERT_WEBHOOK_URL: str | None = os.getenv("ALERT_WEBHOOK_URL")
     ALERT_COOLDOWN_SECONDS: int = int(os.getenv("ALERT_COOLDOWN_SECONDS", "3600"))

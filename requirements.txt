@@ -27,6 +27,10 @@ prometheus_client>=0.18.0
 # WebSocket server (streaming/ws_server.py)
 websockets>=12.0
 
+# Kafka streaming backend (STREAMING_BACKEND=kafka)
+confluent-kafka>=2.3.0
+fastavro>=1.9.0
+
 # Cryptography (model artifact signing/verification)
 cryptography>=42.0.0
 

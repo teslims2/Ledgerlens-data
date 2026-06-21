@@ -41,11 +41,18 @@ class StreamingPipeline:
         scorer: StreamingScorer,
         dispatcher: AlertDispatcher,
         pairs: list[tuple[str, str]] | None = None,
+        role: str = "all",
     ):
+        if role not in ("all", "producer", "worker"):
+            raise ValueError(f"Unknown role: {role!r}")
         self._buffer = buffer
         self._scorer = scorer
         self._dispatcher = dispatcher
         self._pairs = list(pairs) if pairs is not None else list(config.WATCHED_ASSET_PAIRS)
+        # role applies only to the Kafka backend: "producer" runs SSE→Kafka
+        # producers, "worker" runs the consuming scorer, "all" runs both in one
+        # process. The sse backend ignores role.
+        self._role = role
         self._stop_event = threading.Event()
         self._worker_threads: list[threading.Thread] = []
 
@@ -54,6 +61,21 @@ class StreamingPipeline:
     # ------------------------------------------------------------------
 
     def run(self) -> None:
+        """Run the pipeline using the configured backend.
+
+        ``config.STREAMING_BACKEND`` selects the transport:
+          * ``"sse"`` (default) — the threaded Horizon SSE pipeline below.
+          * ``"kafka"`` — a Kafka producer per pair + a :class:`KafkaWorker`.
+
+        The Kafka modules are imported lazily so the default ``sse`` path never
+        touches ``confluent_kafka`` (operators without Kafka can run unchanged).
+        """
+        if config.STREAMING_BACKEND == "kafka":
+            self._run_kafka()
+        else:
+            self._run_sse()
+
+    def _run_sse(self) -> None:
         """Start one thread per pair, block until KeyboardInterrupt or stop()."""
         sdk_pairs = self._build_sdk_pairs()
         if not sdk_pairs:
@@ -91,6 +113,86 @@ class StreamingPipeline:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _run_kafka(self) -> None:
+        """Kafka backend: produce SSE trades to per-pair topics, score via worker.
+
+        One daemon producer thread per pair forwards Horizon SSE trades into
+        Kafka; a :class:`KafkaWorker` consumes them, scores wallets, and
+        dispatches alerts. Imports are local so the ``sse`` path stays Kafka-free.
+        """
+        # Local imports — only reached when STREAMING_BACKEND == "kafka".
+        from ingestion.kafka_producer import HorizonKafkaProducer
+        from streaming.kafka_worker import KafkaWorker
+
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, lambda *_: self._stop_event.set())
+
+        self._worker_threads = []
+        producer = None
+        worker = None
+
+        if self._role in ("all", "producer"):
+            sdk_pairs = self._build_sdk_pairs()
+            if not sdk_pairs:
+                logger.warning("No asset pairs configured — producer has nothing to do")
+            else:
+                producer = HorizonKafkaProducer()
+                for base_asset, counter_asset in sdk_pairs:
+                    t = threading.Thread(
+                        target=self._produce_pair,
+                        args=(producer, base_asset, counter_asset),
+                        daemon=True,
+                    )
+                    t.start()
+                    self._worker_threads.append(t)
+                logger.info("Kafka producer running with %d pair(s)", len(sdk_pairs))
+
+        if self._role in ("all", "worker"):
+            worker = KafkaWorker(
+                self._scorer,
+                self._dispatcher,
+                self._buffer,
+                metrics_port=config.KAFKA_METRICS_PORT,
+            )
+            worker_thread = threading.Thread(target=worker.run, daemon=True)
+            worker_thread.start()
+            self._worker_threads.append(worker_thread)
+            logger.info("Kafka scoring worker running (group=%s)", config.KAFKA_CONSUMER_GROUP)
+
+        try:
+            while not self._stop_event.is_set():
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            self._stop_event.set()
+        finally:
+            logger.info("Shutting down Kafka pipeline")
+            if worker is not None:
+                worker.stop()
+            if producer is not None:
+                producer.flush()
+            for t in self._worker_threads:
+                t.join(timeout=5)
+
+    def _produce_pair(self, producer, base_asset: SdkAsset, counter_asset: SdkAsset) -> None:
+        pair_label = (
+            f"{base_asset.code}:{getattr(base_asset, 'issuer', None) or 'native'}"
+            f"/{counter_asset.code}:{getattr(counter_asset, 'issuer', None) or 'native'}"
+        )
+        while not self._stop_event.is_set():
+            try:
+                for trade in stream_trades(base_asset, counter_asset):
+                    if self._stop_event.is_set():
+                        return
+                    producer.produce_trade(trade)
+            except Exception as exc:
+                if self._stop_event.is_set():
+                    return
+                logger.warning(
+                    "Producer stream error for pair %s: %s — will reconnect",
+                    pair_label,
+                    exc,
+                )
 
     def _build_sdk_pairs(self) -> list[tuple[SdkAsset, SdkAsset]]:
         xlm = SdkAsset.native()
