@@ -100,6 +100,7 @@ class Config:
     ALERT_CHANNEL: str = os.getenv("ALERT_CHANNEL", "stdout")
     ALERT_WEBHOOK_URL: str | None = os.getenv("ALERT_WEBHOOK_URL")
     ALERT_COOLDOWN_SECONDS: int = int(os.getenv("ALERT_COOLDOWN_SECONDS", "3600"))
+    ALERT_DEAD_LETTER_PATH: str = os.getenv("ALERT_DEAD_LETTER_PATH", "alerts_dlq.ndjson")
     WS_PORT: int = int(os.getenv("WS_PORT", "8765"))
     WS_BIND_HOST: str = os.getenv("WS_BIND_HOST", "127.0.0.1")
     WS_ALLOW_EXTERNAL: bool = os.getenv("WS_ALLOW_EXTERNAL", "") == "1"
