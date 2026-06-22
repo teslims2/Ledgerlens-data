@@ -20,9 +20,11 @@ import pandas as pd
 
 from config import config
 from detection.benford_engine import (
+    BenfordMetrics,
     compute_benford_metrics_for_windows,
     cross_pair_benford_consistency,
 )
+from detection.streaming_benford import StreamingBenfordSketch
 from detection.wallet_graph import compute_wallet_graph_metrics
 from ingestion.data_models import AccountActivity
 
@@ -147,6 +149,7 @@ def compute_benford_features(
     decompose: bool = True,
     liquidity_profiler=None,
     asset: str | None = None,
+    precomputed_metrics: dict[int, BenfordMetrics] | None = None,
 ) -> dict:
     """Flatten per-window Benford metrics into a feature row.
 
@@ -165,7 +168,7 @@ def compute_benford_features(
     and ``benford_residual_mad_{h}h`` — Benford metrics on STL residuals.
     Residual features are set to ``NaN`` for insufficient-data windows.
     """
-    per_window = compute_benford_metrics_for_windows(wallet_trades)
+    per_window = precomputed_metrics or compute_benford_metrics_for_windows(wallet_trades)
 
     features: dict = {}
     for hours, metrics in per_window.items():
@@ -391,6 +394,7 @@ def compute_wallet_graph_features(
 def compute_cross_asset_features(
     wallet: str,
     all_pairs_df: pd.DataFrame,
+    pair_benford_sketches: dict[str, dict[int, StreamingBenfordSketch]] | None = None,
 ) -> dict:
     """Cross-asset coordination features computed from multi-pair trade data.
 
@@ -565,15 +569,29 @@ def compute_cross_asset_features(
     # Feature 6: cross_pair_mad_std
     # Standard deviation of Benford MAD scores across pairs
     per_pair_metrics = {}
-    for pair_id in wallet_trades["pair_id"].unique():
-        pair_trades = wallet_trades[wallet_trades["pair_id"] == pair_id]
-        metrics = compute_benford_metrics_for_windows(pair_trades)
-        # Average MAD across all windows for this pair
-        per_pair_metrics[pair_id] = {
-            "mad": (
-                sum(m.get("mad", 0.0) for m in metrics.values()) / len(metrics) if metrics else 0.0
+    if pair_benford_sketches:
+        for pair_id, sketches in pair_benford_sketches.items():
+            metrics = {h: s.to_metrics() for h, s in sketches.items()}
+            # Average MAD across all windows for this pair
+            per_pair_metrics[pair_id] = BenfordMetrics(
+                chi_square=0.0,
+                mad=(sum(m.mad for m in metrics.values()) / len(metrics) if metrics else 0.0),
+                mad_nonconforming=False,
+                z_scores={},
+                sample_size=0,
             )
-        }
+    else:
+        for pair_id in wallet_trades["pair_id"].unique():
+            pair_trades = wallet_trades[wallet_trades["pair_id"] == pair_id]
+            metrics = compute_benford_metrics_for_windows(pair_trades)
+            # Average MAD across all windows for this pair
+            per_pair_metrics[pair_id] = BenfordMetrics(
+                chi_square=0.0,
+                mad=(sum(m.mad for m in metrics.values()) / len(metrics) if metrics else 0.0),
+                mad_nonconforming=False,
+                z_scores={},
+                sample_size=0,
+            )
 
     features["cross_pair_mad_std"] = cross_pair_benford_consistency(per_pair_metrics)
 
@@ -625,12 +643,16 @@ def build_feature_vector(
     )
 
     features = {"wallet": wallet}
-    features.update(compute_benford_features(wallet_trades))
+    features.update(compute_benford_features(wallet_trades, precomputed_metrics=benford_metrics))
     features.update(compute_trade_pattern_features(wallet, wallet_trades, orderbook_events))
     features.update(compute_volume_timing_features(wallet_trades))
     features.update(compute_wallet_graph_features(wallet, activity, reference_time, funding_graph))
     if all_pairs_df is not None:
-        features.update(compute_cross_asset_features(wallet, all_pairs_df))
+        features.update(
+            compute_cross_asset_features(
+                wallet, all_pairs_df, pair_benford_sketches=pair_benford_sketches
+            )
+        )
     features.update(compute_hardening_features(wallet_trades))
     if amm_trades is not None:
         features.update(compute_cross_venue_features(wallet, wallet_trades, amm_trades))

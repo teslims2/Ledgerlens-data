@@ -290,7 +290,9 @@ def train_models(df: pd.DataFrame, test_size: float = 0.2, random_state: int = 4
 def save_models(results: dict, model_dir: str | None = None) -> None:
     model_dir = model_dir or config.MODEL_DIR
     os.makedirs(model_dir, exist_ok=True)
-    for name, result in results.items():
+    # results can be the full training_output dict or just the "results" inner dict
+    to_save = results.get("results", results) if isinstance(results, dict) else results
+    for name, result in to_save.items():
         joblib.dump(result["model"], os.path.join(model_dir, f"{name}.joblib"))
 
 
