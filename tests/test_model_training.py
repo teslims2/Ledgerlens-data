@@ -10,7 +10,6 @@ from detection.model_training import (
     MODEL_REGISTRY,
     compute_feature_schema_hash,
     detect_label_poisoning,
-    save_metrics_report,
     save_models,
     save_training_artifacts,
     sha256_dataframe,
