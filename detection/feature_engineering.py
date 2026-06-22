@@ -621,6 +621,24 @@ def compute_cross_venue_features(
     return _cvf(wallet, sdex_trades, amm_trades)
 
 
+def compute_graph_embedding_features(
+    wallet: str,
+    graph: nx.DiGraph,
+    encoder,
+) -> dict:
+    """Return GNN embedding features for *wallet* as a flat dict."""
+    dim = config.GNN_EMBEDDING_DIM
+    zero_features = {f"gnn_{i}": 0.0 for i in range(dim)}
+
+    try:
+        if wallet not in graph:
+            return zero_features
+        embedding = encoder.encode(graph, wallet)
+        return {f"gnn_{i}": float(embedding[i]) for i in range(len(embedding))}
+    except Exception:
+        return zero_features
+
+
 def build_feature_vector(
     wallet: str,
     wallet_trades: pd.DataFrame,
@@ -629,6 +647,7 @@ def build_feature_vector(
     funding_graph: nx.DiGraph | None = None,
     all_pairs_df: pd.DataFrame | None = None,
     amm_trades: pd.DataFrame | None = None,
+    gnn_encoder=None,
 ) -> dict:
     """Assemble the full feature row for a single wallet.
 
@@ -648,16 +667,12 @@ def build_feature_vector(
     )
 
     features = {"wallet": wallet}
-    features.update(compute_benford_features(wallet_trades, precomputed_metrics=benford_metrics))
+    features.update(compute_benford_features(wallet_trades))
     features.update(compute_trade_pattern_features(wallet, wallet_trades, orderbook_events))
     features.update(compute_volume_timing_features(wallet_trades))
     features.update(compute_wallet_graph_features(wallet, activity, reference_time, funding_graph))
     if all_pairs_df is not None:
-        features.update(
-            compute_cross_asset_features(
-                wallet, all_pairs_df, pair_benford_sketches=pair_benford_sketches
-            )
-        )
+        features.update(compute_cross_asset_features(wallet, all_pairs_df))
     features.update(compute_hardening_features(wallet_trades))
     if amm_trades is not None:
         features.update(compute_cross_venue_features(wallet, wallet_trades, amm_trades))
@@ -731,6 +746,7 @@ def build_feature_matrix(
     funding_graph: nx.DiGraph | None = None,
     all_pairs_df: pd.DataFrame | None = None,
     amm_trades: pd.DataFrame | None = None,
+    gnn_embeddings: dict[str, dict] | None = None,
 ) -> pd.DataFrame:
     """Build a feature matrix with one row per wallet observed in `trades_df`.
 
@@ -749,15 +765,16 @@ def build_feature_matrix(
     rows = []
     for wallet in wallets:
         mask = (trades_df["base_account"] == wallet) | (trades_df["counter_account"] == wallet)
-        rows.append(
-            build_feature_vector(
-                wallet,
-                trades_df[mask],
-                orderbook_events=orderbook_events,
-                funding_graph=funding_graph,
-                all_pairs_df=all_pairs_df if all_pairs_df is not None else trades_df,
-                amm_trades=amm_trades,
-            )
+        row = build_feature_vector(
+            wallet,
+            trades_df[mask],
+            orderbook_events=orderbook_events,
+            funding_graph=funding_graph,
+            all_pairs_df=all_pairs_df if all_pairs_df is not None else trades_df,
+            amm_trades=amm_trades,
         )
+        if gnn_embeddings and wallet in gnn_embeddings:
+            row.update(gnn_embeddings[wallet])
+        rows.append(row)
 
     return pd.DataFrame(rows)
