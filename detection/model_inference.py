@@ -25,6 +25,7 @@ from detection.model_training import (
     MODEL_REGISTRY,
     compute_feature_schema_hash,
 )
+from detection.list_override import ListOverride
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -104,6 +105,7 @@ class RiskScorer:
 
     def __init__(self, model_dir: str | None = None):
         self.model_dir = model_dir or config.MODEL_DIR
+        self.list_override = ListOverride()
         self.metadata = self._load_metadata()
         self.models = self._load_models()
         from detection.meta_learner import LeafEmbeddingExtractor
@@ -185,6 +187,18 @@ class RiskScorer:
         When consensus cannot be reached:
             {"score": 100, "consensus_failure": True, ...}
         """
+        if isinstance(feature_row, pd.Series):
+            wallet = feature_row.get("wallet")
+            if wallet is not None:
+                override_val = self.list_override.check(wallet)
+                if override_val is not None:
+                    return {
+                        "score": override_val,
+                        "benford_flag": False,
+                        "ml_flag": bool(override_val >= 50),
+                        "confidence": 100,
+                    }
+
         if not self.models:
             raise RuntimeError(
                 f"No trained models found in {self.model_dir}. Run model_training.py first."
@@ -289,3 +303,26 @@ class RiskScorer:
         """Score every row in a feature matrix."""
         scores = feature_matrix.apply(self.score, axis=1, result_type="expand")
         return pd.concat([feature_matrix[["wallet"]], scores], axis=1)
+
+
+def _score_one(wallet: str) -> dict:
+    """Fetch a wallet's on-chain account data and return a risk score dict.
+
+    Raises on network/HTTP errors so batch_scorer can capture per-wallet
+    failures without crashing the batch.
+    """
+    import requests
+
+    resp = requests.get(
+        f"https://horizon.stellar.org/accounts/{wallet}", timeout=10
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    balances = data.get("balances", [])
+    native = next((b for b in balances if b.get("asset_type") == "native"), {})
+    xlm_balance = float(native.get("balance", 0))
+
+    # Placeholder — replace with RiskScorer.score() once feature pipeline wired in
+    score = min(xlm_balance / 10_000, 1.0)
+    return {"wallet": wallet, "score": round(score, 4), "xlm_balance": xlm_balance}

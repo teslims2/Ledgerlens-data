@@ -19,6 +19,8 @@ Also provides:
   same asset pair within a configurable time window.
 """
 
+import re
+import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from itertools import combinations
 import re
@@ -27,6 +29,7 @@ from typing import Literal
 import networkx as nx
 import numpy as np
 import pandas as pd
+import re
 
 from ingestion.data_models import AccountActivity
 
@@ -43,11 +46,11 @@ def build_funding_graph(
     activities: Iterable[AccountActivity],
     trades: pd.DataFrame | None = None,
     *,
+    validate_account_ids: bool = False,
     co_trade_window: str | pd.Timedelta = "5min",
     output_format: Literal["networkx", "pyg"] = "networkx",
     node_features: pd.DataFrame | Mapping[str, Sequence[float]] | None = None,
-    validate_account_ids: bool = False,
-):
+) -> "nx.DiGraph":
     """Build the wallet graph, preserving the historical NetworkX default.
 
     Funding edges point from funder to funded account. When ``trades`` is
