@@ -17,7 +17,6 @@ buffered into a DataFrame) for a single wallet.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Optional
 
 import networkx as nx
 import numpy as np

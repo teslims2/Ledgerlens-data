@@ -99,6 +99,7 @@ def compute_feature_schema_hash(feature_columns: list[str]) -> str:
     schema_str = "\n".join(sorted_cols)
     return f"sha256:{hashlib.sha256(schema_str.encode()).hexdigest()}"
 
+
 LABEL_DISTRIBUTION_BASELINE_PATH = os.path.join(
     config.MODEL_DIR, "label_distribution_baseline.json"
 )
@@ -398,12 +399,11 @@ def main() -> None:
         return
 
     # --with-gnn: pre-train GNN encoder and append embedding features
-    gnn_encoder = None
     if args.with_gnn:
         try:
-            from detection.gnn_encoder import GNNEncoder, pretrain_gnn_contrastive
-
             import networkx as nx
+
+            from detection.gnn_encoder import GNNEncoder, pretrain_gnn_contrastive
 
             logger.info("Building wallet graph for GNN pre-training…")
             # Build a simple co-occurrence graph from wallet column for pre-training
@@ -451,8 +451,6 @@ def main() -> None:
                 json.dump({"loss_curve": loss_curve}, f, indent=2)
             logger.info("GNN pre-training loss curve written to %s", loss_report_path)
 
-            gnn_encoder = encoder
-
             # Append GNN embedding features to the training DataFrame
             logger.info("Appending GNN embedding features to training data…")
             gnn_features: list[dict] = []
@@ -461,17 +459,13 @@ def main() -> None:
                     emb = encoder.encode(graph, wallet)
                     gnn_features.append({f"gnn_{i}": float(emb[i]) for i in range(len(emb))})
                 except Exception:
-                    gnn_features.append(
-                        {f"gnn_{i}": 0.0 for i in range(config.GNN_EMBEDDING_DIM)}
-                    )
+                    gnn_features.append({f"gnn_{i}": 0.0 for i in range(config.GNN_EMBEDDING_DIM)})
             gnn_df = pd.DataFrame(gnn_features, index=df.index)
             df = pd.concat([df, gnn_df], axis=1)
             logger.info("GNN embedding columns added: gnn_0 … gnn_%d", config.GNN_EMBEDDING_DIM - 1)
 
         except ImportError as exc:
-            logger.error(
-                "--with-gnn requested but torch/torch_geometric not available: %s", exc
-            )
+            logger.error("--with-gnn requested but torch/torch_geometric not available: %s", exc)
             logger.error("Install torch and torch_geometric to enable GNN training.")
 
     training_output = train_models(
