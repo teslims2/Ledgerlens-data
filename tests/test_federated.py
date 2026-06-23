@@ -185,10 +185,10 @@ def test_three_node_simulation_auc():
         m.fit(X, y)  # initial fit to set coef_ shape
         models.append(m)
 
-    def _get_w(m: SGDClassifier) -> np.ndarray:
+    def _get_w(m: LogisticRegression) -> np.ndarray:
         return np.concatenate([m.coef_.ravel(), m.intercept_.ravel()])
 
-    def _set_w(m: SGDClassifier, w: np.ndarray) -> None:
+    def _set_w(m: LogisticRegression, w: np.ndarray) -> None:
         n = m.coef_.size
         m.coef_ = w[:n].reshape(m.coef_.shape)
         m.intercept_ = w[n:].reshape(m.intercept_.shape)

@@ -5,8 +5,6 @@ external dependency is mocked.
 """
 
 import datetime
-import os
-import signal
 import threading
 import time
 from unittest.mock import MagicMock

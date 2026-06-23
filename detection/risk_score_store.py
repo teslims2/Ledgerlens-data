@@ -4,8 +4,8 @@ Used by `run_pipeline.py` to persist `RiskScorer.score()` output for
 `ledgerlens-api` to read, and to look up previously flagged wallets.
 """
 
-from collections.abc import Iterable
 import time
+from collections.abc import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError

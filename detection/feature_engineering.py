@@ -182,9 +182,7 @@ def compute_benford_features(
 
     if decompose and not wallet_trades.empty:
         for hours, res_metrics in _compute_residual_benford_for_windows(wallet_trades).items():
-            features[f"benford_residual_chi_square_{hours}h"] = res_metrics.get(
-                "chi_square", 0.0
-            )
+            features[f"benford_residual_chi_square_{hours}h"] = res_metrics.get("chi_square", 0.0)
             features[f"benford_residual_mad_{hours}h"] = res_metrics.get("mad", 0.0)
 
     if liquidity_profiler is not None and asset is not None:
@@ -668,9 +666,7 @@ def build_feature_vector(
     )
 
     features = {"wallet": wallet}
-    features.update(
-        compute_benford_features(wallet_trades, precomputed_metrics=benford_metrics)
-    )
+    features.update(compute_benford_features(wallet_trades, precomputed_metrics=benford_metrics))
     features.update(compute_trade_pattern_features(wallet, wallet_trades, orderbook_events))
     features.update(compute_volume_timing_features(wallet_trades))
     features.update(compute_wallet_graph_features(wallet, activity, reference_time, funding_graph))
