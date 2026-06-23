@@ -149,8 +149,17 @@ class RiskScorer:
                     # Prototypical classifier
                     proto_path = os.path.join(self.model_dir, "prototypes.joblib")
                     if os.path.exists(proto_path):
+                        from detection.persistence import ModelArtifact, ModelIntegrityError
+
                         proto = PrototypicalClassifier()
                         proto.prototypes = joblib.load(proto_path)
+                        try:
+                            ModelArtifact(self.model_dir).verify_chain("prototypes")
+                        except ModelIntegrityError as exc:
+                            logger.warning(
+                                "Artifact integrity check skipped or failed for prototypes: %s",
+                                exc,
+                            )
             except Exception as e:
                 logger.warning("Failed to load meta-learners: %s", e)
 
