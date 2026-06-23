@@ -132,7 +132,24 @@ class StreamingScorer:
             return None
 
         try:
-            return self._risk_scorer.score(feature_row)
+            import time
+            t0 = time.time()
+            res = self._risk_scorer.score(feature_row)
+            latency_ms = (time.time() - t0) * 1000
+            model_version = self._risk_scorer.metadata.get("model_version", "unknown") if self._risk_scorer.metadata else "unknown"
+            
+            logger.info("Wallet scored", extra={
+                "wallet": wallet,
+                "score": res["score"],
+                "latency_ms": latency_ms,
+                "model_version": model_version,
+                "asset_pair": "unknown"
+            })
+            return res
         except Exception as exc:
-            logger.warning("Scoring failed for wallet %s: %s", wallet, exc)
+            logger.warning("Scoring failed", exc_info=True, extra={
+                "wallet": wallet,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)
+            })
             return None

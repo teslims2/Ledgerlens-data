@@ -98,13 +98,14 @@ class AlertDispatcher:
             self._deliver_websocket(wallet, risk_score, pair_id)
 
     def _deliver_stdout(self, wallet: str, risk_score: dict, pair_id: str) -> None:
-        print(
-            f"[ALERT] wallet={wallet} pair={pair_id}"
-            f" score={risk_score['score']}"
-            f" benford={risk_score['benford_flag']}"
-            f" ml={risk_score['ml_flag']}"
-            f" confidence={risk_score['confidence']}"
-        )
+        logger.info("Alert dispatched", extra={
+            "wallet": wallet,
+            "pair_id": pair_id,
+            "score": risk_score["score"],
+            "benford_flag": risk_score.get("benford_flag"),
+            "ml_flag": risk_score.get("ml_flag"),
+            "confidence": risk_score.get("confidence")
+        })
 
     def _write_to_dead_letter(self, payload: dict) -> None:
         try:

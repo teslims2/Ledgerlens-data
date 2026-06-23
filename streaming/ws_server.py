@@ -653,8 +653,14 @@ async def publish_score_update(score_event: dict) -> None:
         wallet_id = score_event.get("wallet")
         asset_pair = score_event.get("asset_pair")
         if not wallet_id or not asset_pair:
-            logger.warning("Score event missing wallet or asset_pair: %s", score_event)
+            logger.warning("Score event missing wallet or asset_pair", extra={"event": score_event})
             return
+
+        logger.info("Score event published", extra={
+            "wallet": wallet_id,
+            "asset_pair": asset_pair,
+            "score": score_event.get("score")
+        })
 
         # Get next sequence number
         seq = _seq_counter.next()

@@ -43,6 +43,7 @@ def _parse_pool_ids(raw: str) -> list[str]:
 class Config:
     HORIZON_URL: str = os.getenv("HORIZON_URL", "https://horizon.stellar.org")
     STELLAR_NETWORK: str = os.getenv("STELLAR_NETWORK", "PUBLIC")
+    LOG_FORMAT: str = os.getenv("LOG_FORMAT", "json").lower()
 
     WATCHED_ASSET_PAIRS: list[tuple[str, str]] = _parse_pairs(
         os.getenv(
