@@ -42,7 +42,7 @@ MODEL_REGISTRY = {
     "lightgbm": LGBMClassifier,
 }
 
-FEATURE_COLUMNS_EXCLUDE = {"wallet", "label"}
+FEATURE_COLUMNS_EXCLUDE = {"wallet", "label", "profile"}
 PSI_N_BINS = 10
 PSI_EPSILON = 1e-4
 

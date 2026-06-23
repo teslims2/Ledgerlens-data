@@ -118,10 +118,8 @@ def test_score_wallet_cli_bypasses_ingest(mock_scorer_cls, mock_load_trades, tem
     )
     mock_scorer_cls.return_value = mock_scorer
 
-    # Allowlisted wallet
-    test_wallet = (
-        "GALLOW12356789012356789012356789012356789012356789012"  # Must look like Stellar public key
-    )
+    # Allowlisted wallet (56-char Stellar public key)
+    test_wallet = "GALLOW" + "1" * 50
     allowpath.write_text(json.dumps([test_wallet]))
     mock_scorer.list_override._reload()
 

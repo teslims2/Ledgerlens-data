@@ -42,12 +42,20 @@ def signing_key_paths(tmp_path):
 @pytest.fixture
 def sample_report():
     return ForensicReport(
+        report_id="test-report-id",
+        generated_at="2026-06-22T12:00:00Z",
         wallet="GABC1234567890123456789012345678901234567890123456789012",
         asset_pair="XLM:native/USDC:issuer",
-        risk_score={"score": 83, "benford_flag": True, "ml_flag": True, "confidence": 76},
-        shap_explanations=[
+        risk_score=83,
+        score_lower=73,
+        score_upper=93,
+        verdict="wash_trade",
+        top_shap_features=[
             {"feature": "benford_mad_24h", "contribution": 0.34, "value": 0.047},
         ],
+        benford_analysis={},
+        trade_evidence=[],
+        model_metadata={"name": "test", "version": "v1"},
     )
 
 

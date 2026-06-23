@@ -104,9 +104,9 @@ def test_webhook_rejects_http_url():
 
 
 def test_webhook_posts_correct_payload():
-    with patch("streaming.alert_dispatcher.requests") as mock_requests:
+    with patch("streaming.alert_dispatcher.requests.post") as mock_post:
         mock_response = MagicMock()
-        mock_requests.post.return_value = mock_response
+        mock_post.return_value = mock_response
 
         dispatcher = AlertDispatcher(
             channel="webhook",
@@ -115,8 +115,8 @@ def test_webhook_posts_correct_payload():
         )
         dispatcher.dispatch(WALLET, ABOVE_THRESHOLD, PAIR_ID)
 
-    mock_requests.post.assert_called_once()
-    call_args = mock_requests.post.call_args
+    mock_post.assert_called_once()
+    call_args = mock_post.call_args
     assert call_args[0][0] == "https://hooks.example.com/alert"
 
     payload = call_args[1]["json"]
@@ -158,7 +158,7 @@ def test_webhook_retries_on_500(tmp_path):
     dlq_file = tmp_path / "test_dlq.ndjson"
     with (
         patch("streaming.alert_dispatcher.config") as mock_config,
-        patch("streaming.alert_dispatcher.requests") as mock_requests,
+        patch("streaming.alert_dispatcher.requests.post") as mock_post,
         patch("streaming.alert_dispatcher.time.sleep") as mock_sleep,
     ):
 
@@ -181,7 +181,7 @@ def test_webhook_retries_on_500(tmp_path):
         mock_resp_200.status_code = 200
         mock_resp_200.raise_for_status.side_effect = None
 
-        mock_requests.post.side_effect = [mock_resp_500_1, mock_resp_500_2, mock_resp_200]
+        mock_post.side_effect = [mock_resp_500_1, mock_resp_500_2, mock_resp_200]
 
         dispatcher = AlertDispatcher(
             channel="webhook",
@@ -192,7 +192,7 @@ def test_webhook_retries_on_500(tmp_path):
         dispatcher.dispatch(WALLET, ABOVE_THRESHOLD, PAIR_ID)
 
         # It should call post 3 times
-        assert mock_requests.post.call_count == 3
+        assert mock_post.call_count == 3
         # It should sleep twice
         assert mock_sleep.call_count == 2
         # Since it succeeded on 3rd attempt, DLQ file should not exist
@@ -208,7 +208,7 @@ def test_webhook_no_retry_on_400(tmp_path):
     dlq_file = tmp_path / "test_dlq.ndjson"
     with (
         patch("streaming.alert_dispatcher.config") as mock_config,
-        patch("streaming.alert_dispatcher.requests") as mock_requests,
+        patch("streaming.alert_dispatcher.requests.post") as mock_post,
         patch("streaming.alert_dispatcher.time.sleep") as mock_sleep,
     ):
 
@@ -220,7 +220,7 @@ def test_webhook_no_retry_on_400(tmp_path):
             "400 Bad Request", response=mock_resp_400
         )
 
-        mock_requests.post.side_effect = [mock_resp_400]
+        mock_post.side_effect = [mock_resp_400]
 
         dispatcher = AlertDispatcher(
             channel="webhook",
@@ -231,7 +231,7 @@ def test_webhook_no_retry_on_400(tmp_path):
         dispatcher.dispatch(WALLET, ABOVE_THRESHOLD, PAIR_ID)
 
         # It should call post once (no retry)
-        assert mock_requests.post.call_count == 1
+        assert mock_post.call_count == 1
         # It should not sleep
         assert mock_sleep.call_count == 0
         # DLQ file should contain the failed alert payload
@@ -253,7 +253,7 @@ def test_webhook_retries_on_connection_error(tmp_path):
     dlq_file = tmp_path / "test_dlq.ndjson"
     with (
         patch("streaming.alert_dispatcher.config") as mock_config,
-        patch("streaming.alert_dispatcher.requests") as mock_requests,
+        patch("streaming.alert_dispatcher.requests.post") as mock_post,
         patch("streaming.alert_dispatcher.time.sleep") as mock_sleep,
     ):
 
@@ -263,7 +263,7 @@ def test_webhook_retries_on_connection_error(tmp_path):
         mock_resp_200.status_code = 200
         mock_resp_200.raise_for_status.side_effect = None
 
-        mock_requests.post.side_effect = [
+        mock_post.side_effect = [
             requests.exceptions.ConnectionError("Connection timed out"),
             mock_resp_200,
         ]
@@ -277,7 +277,7 @@ def test_webhook_retries_on_connection_error(tmp_path):
         dispatcher.dispatch(WALLET, ABOVE_THRESHOLD, PAIR_ID)
 
         # It should call post 2 times
-        assert mock_requests.post.call_count == 2
+        assert mock_post.call_count == 2
         # It should sleep once
         assert mock_sleep.call_count == 1
         assert not dlq_file.exists()
@@ -292,7 +292,7 @@ def test_webhook_exhausts_retries_and_writes_to_dlq(tmp_path):
     dlq_file = tmp_path / "test_dlq.ndjson"
     with (
         patch("streaming.alert_dispatcher.config") as mock_config,
-        patch("streaming.alert_dispatcher.requests") as mock_requests,
+        patch("streaming.alert_dispatcher.requests.post") as mock_post,
         patch("streaming.alert_dispatcher.time.sleep") as mock_sleep,
     ):
 
@@ -308,7 +308,7 @@ def test_webhook_exhausts_retries_and_writes_to_dlq(tmp_path):
             )
             failures.append(mock_resp)
 
-        mock_requests.post.side_effect = failures
+        mock_post.side_effect = failures
 
         dispatcher = AlertDispatcher(
             channel="webhook",
@@ -320,7 +320,7 @@ def test_webhook_exhausts_retries_and_writes_to_dlq(tmp_path):
         dispatcher.dispatch(WALLET, ABOVE_THRESHOLD, PAIR_ID)
 
         # It should call post 4 times
-        assert mock_requests.post.call_count == 4
+        assert mock_post.call_count == 4
         # It should sleep 3 times
         assert mock_sleep.call_count == 3
         # DLQ file should contain the failed alert payload

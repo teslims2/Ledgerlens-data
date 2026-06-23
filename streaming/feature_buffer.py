@@ -122,7 +122,7 @@ class FeatureBuffer:
             benford_metrics=benford_metrics,
             pair_benford_sketches=pair_benford_sketches,
         )
-        return pd.Series(features)
+        return pd.Series(features).fillna(0.0)
 
     def wallet_trade_count(self, wallet: str) -> int:
         """Return the number of trades currently buffered for *wallet*."""

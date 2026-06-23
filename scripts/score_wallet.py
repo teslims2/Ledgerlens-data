@@ -139,7 +139,7 @@ def main() -> None:
         sys.exit(1)
 
     override_val = scorer.list_override.check(args.wallet)
-    if override_val is not None:
+    if override_val in (0, 100):
         result = {
             "score": override_val,
             "benford_flag": False,

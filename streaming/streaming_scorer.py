@@ -116,7 +116,7 @@ class StreamingScorer:
         or ``None`` if the wallet has fewer than ``min_trades`` buffered trades.
         """
         override_val = self._risk_scorer.list_override.check(wallet)
-        if override_val is not None:
+        if override_val in (0, 100):
             return {
                 "score": override_val,
                 "benford_flag": False,

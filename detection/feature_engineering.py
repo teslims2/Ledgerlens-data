@@ -183,9 +183,9 @@ def compute_benford_features(
     if decompose and not wallet_trades.empty:
         for hours, res_metrics in _compute_residual_benford_for_windows(wallet_trades).items():
             features[f"benford_residual_chi_square_{hours}h"] = res_metrics.get(
-                "chi_square", float("nan")
+                "chi_square", 0.0
             )
-            features[f"benford_residual_mad_{hours}h"] = res_metrics.get("mad", float("nan"))
+            features[f"benford_residual_mad_{hours}h"] = res_metrics.get("mad", 0.0)
 
     if liquidity_profiler is not None and asset is not None:
         _add_calibrated_benford_features(
@@ -647,6 +647,8 @@ def build_feature_vector(
     all_pairs_df: pd.DataFrame | None = None,
     amm_trades: pd.DataFrame | None = None,
     gnn_encoder=None,
+    benford_metrics: dict | None = None,
+    pair_benford_sketches: dict | None = None,
 ) -> dict:
     """Assemble the full feature row for a single wallet.
 
@@ -666,12 +668,18 @@ def build_feature_vector(
     )
 
     features = {"wallet": wallet}
-    features.update(compute_benford_features(wallet_trades))
+    features.update(
+        compute_benford_features(wallet_trades, precomputed_metrics=benford_metrics)
+    )
     features.update(compute_trade_pattern_features(wallet, wallet_trades, orderbook_events))
     features.update(compute_volume_timing_features(wallet_trades))
     features.update(compute_wallet_graph_features(wallet, activity, reference_time, funding_graph))
     if all_pairs_df is not None:
-        features.update(compute_cross_asset_features(wallet, all_pairs_df))
+        features.update(
+            compute_cross_asset_features(
+                wallet, all_pairs_df, pair_benford_sketches=pair_benford_sketches
+            )
+        )
     features.update(compute_hardening_features(wallet_trades))
     if amm_trades is not None:
         features.update(compute_cross_venue_features(wallet, wallet_trades, amm_trades))
@@ -682,7 +690,7 @@ def build_feature_vector(
     else:
         features.update({f"gnn_{i}": 0.0 for i in range(config.GNN_EMBEDDING_DIM)})
 
-    return features
+    return {k: (0.0 if isinstance(v, float) and pd.isna(v) else v) for k, v in features.items()}
 
 
 def compute_hardening_features(wallet_trades: pd.DataFrame) -> dict:

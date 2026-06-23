@@ -137,6 +137,9 @@ def _generate_feature_level(
             row["entropy_of_amounts"] = rng.uniform(3.0, 6.0)
             row["cross_wallet_volume_corr"] = rng.uniform(-0.3, 0.3)
 
+        for gnn_idx in range(config.GNN_EMBEDDING_DIM):
+            row[f"gnn_{gnn_idx}"] = 0.0
+
         row["label"] = int(is_wash)
         rows.append(row)
 

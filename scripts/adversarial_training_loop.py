@@ -118,6 +118,16 @@ def generate_dataset_from_profile(
     if "profile" not in df.columns:
         df["profile"] = profile_name
 
+    if df["label"].nunique() < 2:
+        from scripts.generate_synthetic_dataset import _generate_feature_level
+
+        legit = _generate_feature_level(
+            n_wallets=max((n_wallets or config.SIMULATOR_N_WALLETS) * 2, 20),
+            seed=seed,
+        )
+        legit = legit[legit["label"] == 0]
+        df = pd.concat([legit, df], ignore_index=True)
+
     return df
 
 

@@ -5,6 +5,7 @@ integrity verification (Ed25519 trust chain).
 import hashlib
 import json
 import os
+import threading
 from datetime import UTC, datetime
 
 from cryptography.hazmat.primitives import serialization
@@ -15,6 +16,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 from sqlalchemy.pool import QueuePool
 
 from config import config
+
+_table_init_lock = threading.Lock()
 
 
 class Base(DeclarativeBase):
@@ -98,7 +101,8 @@ def get_session_factory(engine: Engine | None = None) -> sessionmaker[Session]:
         SQLAlchemy sessionmaker bound to the engine
     """
     engine = engine or get_engine()
-    Base.metadata.create_all(engine)
+    with _table_init_lock:
+        Base.metadata.create_all(engine, checkfirst=True)
 
     # Configure SQLite for better concurrent access
     if str(engine.url).startswith("sqlite"):

@@ -206,7 +206,7 @@ class RiskScorer:
             wallet = feature_row.get("wallet")
             if wallet is not None:
                 override_val = self.list_override.check(wallet)
-                if override_val is not None:
+                if override_val in (0, 100):
                     return {
                         "score": override_val,
                         "benford_flag": False,
