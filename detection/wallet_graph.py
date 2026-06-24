@@ -43,8 +43,8 @@ def _validate_account_id(account_id: str) -> bool:
 def build_funding_graph(
     activities: Iterable[AccountActivity],
     trades: pd.DataFrame | None = None,
-    *,
     validate_account_ids: bool = False,
+    *,
     co_trade_window: str | pd.Timedelta = "5min",
     output_format: Literal["networkx", "pyg"] = "networkx",
     node_features: pd.DataFrame | Mapping[str, Sequence[float]] | None = None,
