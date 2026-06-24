@@ -109,6 +109,18 @@ Benford signals alone aren't definitive — legitimate high-frequency market mak
 
 Models are trained with **SMOTE** to handle class imbalance and evaluated using **AUC-ROC**, **Precision-Recall AUC**, and **F1-score**. SHAP values provide interpretable explanations for every risk score.
 
+### Adversarial robustness
+
+A sophisticated operator who reverse-engineers the scoring system could perturb
+their on-chain footprint just enough to stay below the alert threshold. The
+`detection/adversarial/` package quantifies that attack surface: it runs
+**FGSM** and **PGD** (Madry et al., 2018) evasion attacks — estimating feature
+gradients by finite differences against the tree ensemble's continuous score —
+and reports the evasion success rate, the minimum L-inf perturbation per
+feature, and the most vulnerable features. **Adversarial-training augmentation**
+then retrains on PGD-perturbed wash examples and measures the AUC-ROC gain on a
+perturbed test set. See `scripts/run_adversarial_eval.py`.
+
 ## Repository Structure
 
 ```
@@ -134,6 +146,7 @@ ledgerlens-data/
 │   ├── model_training.py             ← Train ensemble classifiers (CLI)
 │   ├── model_inference.py            ← Real-time risk scoring
 │   ├── shap_explainer.py             ← SHAP interpretability layer
+│   ├── adversarial/                  ← FGSM/PGD evasion attacks + robustness eval
 │   ├── persistence.py                ← SQLAlchemy RiskScore model + engine
 │   └── risk_score_store.py           ← RiskScore upsert/read repository
 │
@@ -141,7 +154,8 @@ ledgerlens-data/
 │   └── contract_client.py            ← ledgerlens-score Soroban contract client
 │
 ├── scripts/
-│   └── generate_synthetic_dataset.py ← Synthetic labelled dataset for local training/demo
+│   ├── generate_synthetic_dataset.py ← Synthetic labelled dataset for local training/demo
+│   └── run_adversarial_eval.py       ← Adversarial robustness report (FGSM/PGD)
 │
 ├── utils/
 │   ├── logging.py                    ← Shared logger setup
@@ -155,7 +169,8 @@ ledgerlens-data/
     ├── test_persistence.py
     ├── test_contract_client.py
     ├── test_model_training.py
-    └── test_inference_shap.py
+    ├── test_inference_shap.py
+    └── test_adversarial.py
 ```
 
 ## Quick Start
@@ -329,15 +344,17 @@ ledgerlens-data/
 │   ├── feature_engineering.py  ← 30+ feature builder (done)
 │   ├── wallet_graph.py          ← funding-graph similarity/centrality
 │   ├── model_training.py        ← ensemble training CLI
-│   ├── model_inference.py       ← RiskScorer ensemble scoring
+│   ├── model_inference.py       ← RiskScorer ensemble scoring (+ continuous score)
 │   ├── shap_explainer.py        ← per-wallet + ensemble SHAP attributions
+│   ├── adversarial/             ← FGSM/PGD evasion attacks + robustness eval
 │   ├── persistence.py           ← SQLAlchemy RiskScore model + engine
 │   └── risk_score_store.py      ← RiskScore upsert/read repository
 ├── integrations/
 │   └── contract_client.py      ← ledgerlens-score Soroban contract client
 ├── scripts/
-│   └── generate_synthetic_dataset.py ← synthetic labelled dataset generator
-└── tests/ (8 modules, see Repository Structure above)
+│   ├── generate_synthetic_dataset.py ← synthetic labelled dataset generator
+│   └── run_adversarial_eval.py  ← adversarial robustness report (FGSM/PGD)
+└── tests/ (9 modules, see Repository Structure above)
 ```
 
 #### Known gaps / TODOs

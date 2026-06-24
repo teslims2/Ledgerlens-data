@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Adversarial robustness evaluation framework (`detection/adversarial/`):
+  finite-difference FGSM and PGD evasion attacks against the scoring ensemble
+  (`attack.py`), robustness metrics — attack success rate, per-feature minimum
+  L-inf epsilon, and most-vulnerable-feature ranking (`robustness.py`), and
+  adversarial-training augmentation with a before/after AUC-ROC comparison
+  (`augmentation.py`).
+- `scripts/run_adversarial_eval.py` CLI that generates a JSON robustness report
+  from a trained ensemble and a labelled feature matrix.
+- Test coverage for the adversarial attacks, robustness metrics, and
+  augmentation (`tests/test_adversarial.py`).
+
+### Changed
+- `RiskScorer` now exposes `score_continuous` / `score_continuous_batch`
+  (unrounded 0-100 ensemble score) so gradient-based tooling can probe the
+  model without the integer rounding that makes `score` locally flat. The
+  on-chain `score` is refactored to share an `_ensemble_probabilities` helper
+  with no behavioural change.
+
 ## [0.2.0] - 2026-06-13
 
 ### Added

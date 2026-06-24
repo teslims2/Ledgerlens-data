@@ -12,6 +12,7 @@ added by the persistence layer when a record is stored).
 import os
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from config import config
@@ -57,11 +58,11 @@ class RiskScorer:
                 models[name] = joblib.load(path)
         return models
 
-    def score(self, feature_row: pd.Series) -> dict:
-        """Score a single wallet's feature row.
+    def _ensemble_probabilities(self, feature_row: pd.Series) -> list[float]:
+        """Per-model wash-trade probabilities for a single feature row.
 
-        Returns a dict matching the on-chain `RiskScore` shape:
-            {score, benford_flag, ml_flag, confidence}
+        Raises if no models are loaded so callers (`score`,
+        `score_continuous`) surface the same error.
         """
         if not self.models:
             raise RuntimeError(
@@ -70,8 +71,43 @@ class RiskScorer:
 
         feature_cols = [c for c in feature_row.index if c not in FEATURE_COLUMNS_EXCLUDE]
         X = feature_row[feature_cols].to_frame().T.astype(float)
+        return [model.predict_proba(X)[0, 1] for model in self.models.values()]
 
-        probs = [model.predict_proba(X)[0, 1] for model in self.models.values()]
+    def score_continuous(self, feature_row: pd.Series) -> float:
+        """Continuous ensemble risk score in `[0, 100]` (unrounded).
+
+        `score` rounds this to an int for the on-chain `RiskScore`, which
+        makes it locally flat and unusable for gradient-based analysis. The
+        adversarial robustness tooling (`detection/adversarial`) estimates
+        feature gradients via finite differences against this method, so it
+        must stay continuous.
+        """
+        return _combine_probabilities(self._ensemble_probabilities(feature_row)) * 100
+
+    def score_continuous_batch(self, X: pd.DataFrame) -> np.ndarray:
+        """Continuous ensemble scores for a batch of feature rows.
+
+        `X` must contain (at least) the model feature columns; non-feature
+        columns (`FEATURE_COLUMNS_EXCLUDE`) are dropped. Vectorised over the
+        batch so the adversarial tooling can evaluate every finite-difference
+        probe in one `predict_proba` call per model instead of one per row.
+        """
+        if not self.models:
+            raise RuntimeError(
+                f"No trained models found in {self.model_dir}. " "Run model_training.py first."
+            )
+        feature_cols = [c for c in X.columns if c not in FEATURE_COLUMNS_EXCLUDE]
+        Xf = X[feature_cols].astype(float)
+        per_model = np.column_stack([m.predict_proba(Xf)[:, 1] for m in self.models.values()])
+        return per_model.mean(axis=1) * 100
+
+    def score(self, feature_row: pd.Series) -> dict:
+        """Score a single wallet's feature row.
+
+        Returns a dict matching the on-chain `RiskScore` shape:
+            {score, benford_flag, ml_flag, confidence}
+        """
+        probs = self._ensemble_probabilities(feature_row)
         avg_prob = _combine_probabilities(probs)
 
         benford_mad_cols = [c for c in feature_row.index if c.startswith("benford_mad_")]
