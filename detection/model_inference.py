@@ -10,16 +10,26 @@ BFT voting:
   use the median (for 3 models) — equivalent to a trimmed mean.
 - If fewer than BFT_MIN_CONSENSUS models agree (within 10 points), return
   a ``consensus_failure`` score with maximum uncertainty.
+
+Calibrated weighted mode:
+- ``RiskScorer(weights=...)`` accepts a ``{model_name: weight}`` mapping
+  (e.g. one selected from a Pareto front via
+  ``detection.ensemble_calibrator.EnsembleCalibrator.select_operating_point``)
+  and combines model probabilities as a weighted average instead of BFT
+  voting. ``weights=None`` (the default) preserves the BFT behaviour above.
 """
 
 import json
+import math
 import os
 import statistics
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from config import config
+from detection.list_override import ListOverride
 from detection.model_training import (
     FEATURE_COLUMNS_EXCLUDE,
     MODEL_REGISTRY,
@@ -99,14 +109,23 @@ def _confidence_from_probs(probs: list[float], avg_prob: float) -> int:
     return int(round(certainty * 100))
 
 
+def _benford_flag(feature_row: pd.Series) -> bool:
+    benford_mad_cols = [c for c in feature_row.index if c.startswith("benford_mad_")]
+    return bool(
+        benford_mad_cols and (feature_row[benford_mad_cols] > BENFORD_MAD_FLAG_THRESHOLD).any()
+    )
+
+
 class RiskScorer:
     """Loads trained ensemble models and produces BFT-hardened risk scores."""
 
-    def __init__(self, model_dir: str | None = None):
+    def __init__(self, model_dir: str | None = None, weights: dict[str, float] | None = None):
         self.model_dir = model_dir or config.MODEL_DIR
+        self.list_override = ListOverride()
         self.metadata = self._load_metadata()
         self.models = self._load_models()
         from detection.meta_learner import LeafEmbeddingExtractor
+
         self.extractor = LeafEmbeddingExtractor(self.models)
         self.maml_adapter, self.proto_classifier = self._load_meta_learners()
 
@@ -121,8 +140,12 @@ class RiskScorer:
 
         if os.path.exists(maml_path) and self.models:
             try:
-                from detection.meta_learner import LeafEmbeddingExtractor, MAMLAdapter, PrototypicalClassifier
                 import torch
+
+                from detection.meta_learner import (
+                    MAMLAdapter,
+                    PrototypicalClassifier,
+                )
 
                 # We need to know input_dim. It depends on the leaf indices from base models.
                 # Use metadata if we have it or a dummy row
@@ -141,12 +164,30 @@ class RiskScorer:
                     # Prototypical classifier
                     proto_path = os.path.join(self.model_dir, "prototypes.joblib")
                     if os.path.exists(proto_path):
+                        from detection.persistence import ModelArtifact, ModelIntegrityError
+
                         proto = PrototypicalClassifier()
                         proto.prototypes = joblib.load(proto_path)
+                        try:
+                            ModelArtifact(self.model_dir).verify_chain("prototypes")
+                        except ModelIntegrityError as exc:
+                            logger.warning(
+                                "Artifact integrity check skipped or failed for prototypes: %s",
+                                exc,
+                            )
             except Exception as e:
                 logger.warning("Failed to load meta-learners: %s", e)
 
         return maml, proto
+
+    @staticmethod
+    def _validate_weights(weights: dict[str, float] | None) -> dict[str, float] | None:
+        if weights is None:
+            return None
+        total = sum(weights.values())
+        if not math.isclose(total, 1.0, abs_tol=1e-6):
+            raise ValueError(f"RiskScorer weights must sum to 1.0, got {total}")
+        return weights
 
     def _load_metadata(self) -> dict | None:
         path = os.path.join(self.model_dir, "model_metadata.json")
@@ -173,18 +214,24 @@ class RiskScorer:
                 models[name] = model
         return models
 
-    def score(self, feature_row: pd.Series) -> dict:
-        """Score a single wallet's feature row with BFT voting.
+    def _ensemble_probabilities(self, feature_row: pd.Series) -> list[float]:
+        """Per-model wash-trade probabilities for a single feature row.
 
-        Returns a dict matching the on-chain `RiskScore` shape:
-            {score, benford_flag, ml_flag, confidence}
-
-        When BFT divergence is detected the dict also contains:
-            {"bft_divergence": True}
-
-        When consensus cannot be reached:
-            {"score": 100, "consensus_failure": True, ...}
+        Raises if no models are loaded so callers (`score`,
+        `score_continuous`) surface the same error.
         """
+        if isinstance(feature_row, pd.Series):
+            wallet = feature_row.get("wallet")
+            if wallet is not None:
+                override_val = self.list_override.check(wallet)
+                if override_val in (0, 100):
+                    return {
+                        "score": override_val,
+                        "benford_flag": False,
+                        "ml_flag": bool(override_val >= 50),
+                        "confidence": 100,
+                    }
+
         if not self.models:
             raise RuntimeError(
                 f"No trained models found in {self.model_dir}. Run model_training.py first."
@@ -213,13 +260,16 @@ class RiskScorer:
                 raise RuntimeError(msg)
 
         X = feature_row[feature_cols].to_frame().T.astype(float)
+        return [model.predict_proba(X)[0, 1] for model in self.models.values()]
 
-        probs = [model.predict_proba(X)[0][1] for model in self.models.values()]
+    def score_continuous(self, feature_row: pd.Series) -> float:
+        """Continuous ensemble risk score in `[0, 100]` (unrounded).
 
         # Incorporate MAML adapter if available
         if self.maml_adapter:
             try:
                 import torch
+
                 emb = torch.from_numpy(self.extractor.transform(X)).float()
                 maml_prob = self.maml_adapter.predict_proba(emb)[0]
                 probs.append(float(maml_prob))
@@ -227,37 +277,47 @@ class RiskScorer:
             except Exception as e:
                 logger.warning("MAML scoring failed: %s", e)
 
-        # Incorporate Prototypical classifier if available
-        if self.proto_classifier:
-            try:
-                emb = self.extractor.transform(X)
-                proto_prob = self.proto_classifier.predict_proba(emb)[0]
-                probs.append(float(proto_prob))
-                logger.debug("Prototypical prediction: %.4f", proto_prob)
-            except Exception as e:
-                logger.warning("Prototypical scoring failed: %s", e)
+    def score_continuous_batch(self, X: pd.DataFrame) -> np.ndarray:
+        """Continuous ensemble scores for a batch of feature rows.
 
-        scores_100 = [p * 100 for p in probs]
+        `X` must contain (at least) the model feature columns; non-feature
+        columns (`FEATURE_COLUMNS_EXCLUDE`) are dropped. Vectorised over the
+        batch so the adversarial tooling can evaluate every finite-difference
+        probe in one `predict_proba` call per model instead of one per row.
+        """
+        if not self.models:
+            raise RuntimeError(
+                f"No trained models found in {self.model_dir}. " "Run model_training.py first."
+            )
+        feature_cols = [c for c in X.columns if c not in FEATURE_COLUMNS_EXCLUDE]
+        Xf = X[feature_cols].astype(float)
+        per_model = np.column_stack([m.predict_proba(Xf)[:, 1] for m in self.models.values()])
+        return per_model.mean(axis=1) * 100
+
+        if self.weights is not None:
+            missing = set(self.weights) - set(self.models)
+            if missing:
+                raise ValueError(f"weights reference unknown models: {sorted(missing)}")
+
+            avg_prob = sum(
+                self.weights.get(name, 0.0) * prob
+                for name, prob in zip(self.models, probs, strict=True)
+            )
+            return {
+                "score": int(round(avg_prob * 100)),
+                "benford_flag": _benford_flag(feature_row),
+                "ml_flag": bool(avg_prob >= ML_FLAG_THRESHOLD),
+                "confidence": _confidence_from_probs(probs, avg_prob),
+                "calibrated": True,
+            }
 
         result: dict = {}
 
-        if not _has_consensus(scores_100):
-            logger.warning(
-                "BFT consensus failure — raw scores: %s",
-                [round(s, 1) for s in scores_100],
-            )
-            _increment_bft_counter()
-            avg_prob = sum(probs) / len(probs)
-            result = {
-                "score": 100,
-                "benford_flag": False,
-                "ml_flag": True,
-                "confidence": 0,
-                "consensus_failure": True,
-                "bft_divergence": True,
-            }
-        else:
-            final_score, diverged = bft_trimmed_mean(scores_100)
+        Returns a dict matching the on-chain `RiskScore` shape:
+            {score, benford_flag, ml_flag, confidence}
+        """
+        probs = self._ensemble_probabilities(feature_row)
+        avg_prob = _combine_probabilities(probs)
 
             if diverged:
                 logger.warning(
@@ -268,15 +328,9 @@ class RiskScorer:
 
             avg_prob = final_score / 100.0
 
-            benford_mad_cols = [c for c in feature_row.index if c.startswith("benford_mad_")]
-            benford_flag = bool(
-                benford_mad_cols
-                and (feature_row[benford_mad_cols] > BENFORD_MAD_FLAG_THRESHOLD).any()
-            )
-
             result = {
                 "score": int(round(final_score)),
-                "benford_flag": benford_flag,
+                "benford_flag": _benford_flag(feature_row),
                 "ml_flag": bool(avg_prob >= ML_FLAG_THRESHOLD),
                 "confidence": _confidence_from_probs(probs, avg_prob),
             }
@@ -289,3 +343,24 @@ class RiskScorer:
         """Score every row in a feature matrix."""
         scores = feature_matrix.apply(self.score, axis=1, result_type="expand")
         return pd.concat([feature_matrix[["wallet"]], scores], axis=1)
+
+
+def _score_one(wallet: str) -> dict:
+    """Fetch a wallet's on-chain account data and return a risk score dict.
+
+    Raises on network/HTTP errors so batch_scorer can capture per-wallet
+    failures without crashing the batch.
+    """
+    import requests
+
+    resp = requests.get(f"https://horizon.stellar.org/accounts/{wallet}", timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+
+    balances = data.get("balances", [])
+    native = next((b for b in balances if b.get("asset_type") == "native"), {})
+    xlm_balance = float(native.get("balance", 0))
+
+    # Placeholder — replace with RiskScorer.score() once feature pipeline wired in
+    score = min(xlm_balance / 10_000, 1.0)
+    return {"wallet": wallet, "score": round(score, 4), "xlm_balance": xlm_balance}
