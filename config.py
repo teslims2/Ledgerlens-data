@@ -83,6 +83,11 @@ class Config:
     MIN_TRADES_FOR_SCORING: int = int(os.getenv("MIN_TRADES_FOR_SCORING", "20"))
     LIST_RELOAD_INTERVAL_SECONDS: int = int(os.getenv("LIST_RELOAD_INTERVAL_SECONDS", "60"))
 
+    # Live feature drift monitoring (Population Stability Index)
+    DRIFT_WINDOW_SIZE: int = int(os.getenv("DRIFT_WINDOW_SIZE", "1000"))
+    # Fire an alert when any feature PSI exceeds this value.
+    DRIFT_PSI_THRESHOLD: float = float(os.getenv("DRIFT_PSI_THRESHOLD", "0.2"))
+
     # Forensic reporting
     REPORT_CONCURRENCY: int = int(os.getenv("REPORT_CONCURRENCY", "4"))
 
@@ -134,6 +139,8 @@ class Config:
     # Model integrity & BFT voting
     MODEL_SIGNING_PRIVATE_KEY_PATH: str = os.getenv("MODEL_SIGNING_PRIVATE_KEY_PATH", "")
     TRUSTED_SIGNING_KEY_FINGERPRINT: str = os.getenv("TRUSTED_SIGNING_KEY_FINGERPRINT", "")
+    AUDIT_LOG_PATH: str = os.getenv("AUDIT_LOG_PATH", "data/audit_trail.ndjson")
+    AUDIT_VERIFY_PUBLIC_KEY_PATH: str = os.getenv("AUDIT_VERIFY_PUBLIC_KEY_PATH", "")
     BFT_SCORE_DIVERGENCE_THRESHOLD: int = int(os.getenv("BFT_SCORE_DIVERGENCE_THRESHOLD", "30"))
     BFT_MIN_CONSENSUS: int = int(os.getenv("BFT_MIN_CONSENSUS", "2"))
     POISON_LABEL_RATIO_THRESHOLD: float = float(os.getenv("POISON_LABEL_RATIO_THRESHOLD", "0.15"))
@@ -153,6 +160,11 @@ class Config:
     GAN_PLATEAU_THRESHOLD: float = float(os.getenv("GAN_PLATEAU_THRESHOLD", "0.005"))
     SIMULATOR_N_WALLETS: int = int(os.getenv("SIMULATOR_N_WALLETS", "50"))
     SIMULATOR_TRADES_PER_WALLET: int = int(os.getenv("SIMULATOR_TRADES_PER_WALLET", "100"))
+
+    # Graph neural network encoder
+    GNN_EMBEDDING_DIM: int = int(os.getenv("GNN_EMBEDDING_DIM", "32"))
+    GNN_HIDDEN_DIM: int = int(os.getenv("GNN_HIDDEN_DIM", "64"))
+    GNN_NUM_LAYERS: int = int(os.getenv("GNN_NUM_LAYERS", "2"))
 
     @classmethod
     def validate(cls, require_onchain: bool = False):
