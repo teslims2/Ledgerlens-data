@@ -10,22 +10,31 @@ BFT voting:
   use the median (for 3 models) — equivalent to a trimmed mean.
 - If fewer than BFT_MIN_CONSENSUS models agree (within 10 points), return
   a ``consensus_failure`` score with maximum uncertainty.
+
+Calibrated weighted mode:
+- ``RiskScorer(weights=...)`` accepts a ``{model_name: weight}`` mapping
+  (e.g. one selected from a Pareto front via
+  ``detection.ensemble_calibrator.EnsembleCalibrator.select_operating_point``)
+  and combines model probabilities as a weighted average instead of BFT
+  voting. ``weights=None`` (the default) preserves the BFT behaviour above.
 """
 
 import json
+import math
 import os
 import statistics
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from config import config
+from detection.list_override import ListOverride
 from detection.model_training import (
     FEATURE_COLUMNS_EXCLUDE,
     MODEL_REGISTRY,
     compute_feature_schema_hash,
 )
-from detection.list_override import ListOverride
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -100,15 +109,23 @@ def _confidence_from_probs(probs: list[float], avg_prob: float) -> int:
     return int(round(certainty * 100))
 
 
+def _benford_flag(feature_row: pd.Series) -> bool:
+    benford_mad_cols = [c for c in feature_row.index if c.startswith("benford_mad_")]
+    return bool(
+        benford_mad_cols and (feature_row[benford_mad_cols] > BENFORD_MAD_FLAG_THRESHOLD).any()
+    )
+
+
 class RiskScorer:
     """Loads trained ensemble models and produces BFT-hardened risk scores."""
 
-    def __init__(self, model_dir: str | None = None):
+    def __init__(self, model_dir: str | None = None, weights: dict[str, float] | None = None):
         self.model_dir = model_dir or config.MODEL_DIR
         self.list_override = ListOverride()
         self.metadata = self._load_metadata()
         self.models = self._load_models()
         from detection.meta_learner import LeafEmbeddingExtractor
+
         self.extractor = LeafEmbeddingExtractor(self.models)
         self.maml_adapter, self.proto_classifier = self._load_meta_learners()
 
@@ -123,8 +140,12 @@ class RiskScorer:
 
         if os.path.exists(maml_path) and self.models:
             try:
-                from detection.meta_learner import LeafEmbeddingExtractor, MAMLAdapter, PrototypicalClassifier
                 import torch
+
+                from detection.meta_learner import (
+                    MAMLAdapter,
+                    PrototypicalClassifier,
+                )
 
                 # We need to know input_dim. It depends on the leaf indices from base models.
                 # Use metadata if we have it or a dummy row
@@ -143,12 +164,30 @@ class RiskScorer:
                     # Prototypical classifier
                     proto_path = os.path.join(self.model_dir, "prototypes.joblib")
                     if os.path.exists(proto_path):
+                        from detection.persistence import ModelArtifact, ModelIntegrityError
+
                         proto = PrototypicalClassifier()
                         proto.prototypes = joblib.load(proto_path)
+                        try:
+                            ModelArtifact(self.model_dir).verify_chain("prototypes")
+                        except ModelIntegrityError as exc:
+                            logger.warning(
+                                "Artifact integrity check skipped or failed for prototypes: %s",
+                                exc,
+                            )
             except Exception as e:
                 logger.warning("Failed to load meta-learners: %s", e)
 
         return maml, proto
+
+    @staticmethod
+    def _validate_weights(weights: dict[str, float] | None) -> dict[str, float] | None:
+        if weights is None:
+            return None
+        total = sum(weights.values())
+        if not math.isclose(total, 1.0, abs_tol=1e-6):
+            raise ValueError(f"RiskScorer weights must sum to 1.0, got {total}")
+        return weights
 
     def _load_metadata(self) -> dict | None:
         path = os.path.join(self.model_dir, "model_metadata.json")
@@ -191,7 +230,7 @@ class RiskScorer:
             wallet = feature_row.get("wallet")
             if wallet is not None:
                 override_val = self.list_override.check(wallet)
-                if override_val is not None:
+                if override_val in (0, 100):
                     return {
                         "score": override_val,
                         "benford_flag": False,
@@ -234,6 +273,7 @@ class RiskScorer:
         if self.maml_adapter:
             try:
                 import torch
+
                 emb = torch.from_numpy(self.extractor.transform(X)).float()
                 maml_prob = self.maml_adapter.predict_proba(emb)[0]
                 probs.append(float(maml_prob))
@@ -252,6 +292,23 @@ class RiskScorer:
                 logger.warning("Prototypical scoring failed: %s", e)
 
         scores_100 = [p * 100 for p in probs]
+
+        if self.weights is not None:
+            missing = set(self.weights) - set(self.models)
+            if missing:
+                raise ValueError(f"weights reference unknown models: {sorted(missing)}")
+
+            avg_prob = sum(
+                self.weights.get(name, 0.0) * prob
+                for name, prob in zip(self.models, probs, strict=True)
+            )
+            return {
+                "score": int(round(avg_prob * 100)),
+                "benford_flag": _benford_flag(feature_row),
+                "ml_flag": bool(avg_prob >= ML_FLAG_THRESHOLD),
+                "confidence": _confidence_from_probs(probs, avg_prob),
+                "calibrated": True,
+            }
 
         result: dict = {}
 
@@ -282,15 +339,9 @@ class RiskScorer:
 
             avg_prob = final_score / 100.0
 
-            benford_mad_cols = [c for c in feature_row.index if c.startswith("benford_mad_")]
-            benford_flag = bool(
-                benford_mad_cols
-                and (feature_row[benford_mad_cols] > BENFORD_MAD_FLAG_THRESHOLD).any()
-            )
-
             result = {
                 "score": int(round(final_score)),
-                "benford_flag": benford_flag,
+                "benford_flag": _benford_flag(feature_row),
                 "ml_flag": bool(avg_prob >= ML_FLAG_THRESHOLD),
                 "confidence": _confidence_from_probs(probs, avg_prob),
             }
@@ -313,9 +364,7 @@ def _score_one(wallet: str) -> dict:
     """
     import requests
 
-    resp = requests.get(
-        f"https://horizon.stellar.org/accounts/{wallet}", timeout=10
-    )
+    resp = requests.get(f"https://horizon.stellar.org/accounts/{wallet}", timeout=10)
     resp.raise_for_status()
     data = resp.json()
 
