@@ -26,6 +26,9 @@ gymnasium>=0.29.0
 torch>=2.2.0
 torch_geometric>=2.5.0
 
+# Multi-objective ensemble weight calibration (NSGA-II Pareto search)
+pymoo>=0.6.1
+
 # Persistence / config
 python-dotenv>=1.0.0
 sqlalchemy>=2.0.0
