@@ -77,7 +77,9 @@ class WashTradeCausalDiscovery:
 
     def save_dag(self, path: str) -> None:
         """Save the causal DAG structure as a JSON file."""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         data = {
             "nodes": list(self.dag.nodes),
             "edges": list(self.dag.edges)

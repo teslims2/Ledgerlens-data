@@ -105,7 +105,7 @@ def main() -> None:
         X_test_c = X_test[causal_feats]
         
         model_causal = RandomForestClassifier(random_state=args.seed)
-        model_causal.fit(X_train_c, y_train_c)
+        model_causal.fit(X_train_c, y_train)
         preds_causal = model_causal.predict(X_test_c)
         prec_causal = precision_score(y_test, preds_causal, zero_division=0)
     else:
