@@ -88,6 +88,9 @@ def generate_dataset_from_profile(
             seed=seed,
         )
 
+    from scripts.wash_trade_simulator import AdaptiveAttacker, BaseAttackerProfile, create_profile
+
+    profile: BaseAttackerProfile
     if profile_name == "AdaptiveAttacker" and model_path:
         profile = AdaptiveAttacker(
             n_wallets=n_wallets or config.SIMULATOR_N_WALLETS,
@@ -96,8 +99,6 @@ def generate_dataset_from_profile(
             seed=seed,
         )
     else:
-        from scripts.wash_trade_simulator import create_profile
-
         profile = create_profile(
             profile_name,
             n_wallets=n_wallets or config.SIMULATOR_N_WALLETS,
@@ -179,15 +180,15 @@ def run_adversarial_loop(
 
         save_models(results, model_dir)
 
-        round_data = {
+        round_data: dict[str, float | int | str] = {
             "round": round_idx,
             "profile": profile_name,
             "dataset_size": len(df),
         }
         for model_name, result in results.items():
-            round_data[f"{model_name}_auc_roc"] = result["metrics"]["auc_roc"]
-            round_data[f"{model_name}_pr_auc"] = result["metrics"]["pr_auc"]
-            round_data[f"{model_name}_f1"] = result["metrics"]["f1"]
+            round_data[f"{model_name}_auc_roc"] = float(result["metrics"]["auc_roc"])
+            round_data[f"{model_name}_pr_auc"] = float(result["metrics"]["pr_auc"])
+            round_data[f"{model_name}_f1"] = float(result["metrics"]["f1"])
 
         round_metrics.append(round_data)
 
@@ -196,8 +197,8 @@ def run_adversarial_loop(
         )
 
         if round_idx > 0:
-            prev_auc = round_metrics[round_idx - 1].get("random_forest_auc_roc", 0.0)
-            curr_auc = round_data.get("random_forest_auc_roc", 0.0)
+            prev_auc = float(round_metrics[round_idx - 1].get("random_forest_auc_roc", 0.0))
+            curr_auc = float(round_data.get("random_forest_auc_roc", 0.0))
             improvement = curr_auc - prev_auc
             print(f"  AUC-ROC improvement: {improvement:.4f}")
             if 0 < improvement < plateau_threshold:
@@ -215,8 +216,8 @@ def run_adversarial_loop(
             round_metrics[-1].get("random_forest_auc_roc", 0.0) if round_metrics else 0.0
         ),
         "monotonic_non_decreasing": all(
-            round_metrics[i].get("random_forest_auc_roc", 0.0)
-            >= round_metrics[i - 1].get("random_forest_auc_roc", 0.0)
+            float(round_metrics[i].get("random_forest_auc_roc", 0.0))
+            >= float(round_metrics[i - 1].get("random_forest_auc_roc", 0.0))
             for i in range(1, len(round_metrics))
         ),
         "plateau_exit": len(round_metrics) < gan_rounds,

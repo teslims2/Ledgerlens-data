@@ -59,11 +59,14 @@ class RiskScoreStore:
 
     def get(self, wallet: str, asset_pair: str) -> RiskScoreRecord | None:
         with self._session_factory() as session:
-            return session.scalar(
-                select(RiskScoreRecord).where(
-                    RiskScoreRecord.wallet == wallet,
-                    RiskScoreRecord.asset_pair == asset_pair,
-                )
+            return cast(
+                RiskScoreRecord | None,
+                session.scalar(
+                    select(RiskScoreRecord).where(
+                        RiskScoreRecord.wallet == wallet,
+                        RiskScoreRecord.asset_pair == asset_pair,
+                    )
+                ),
             )
 
     def list_flagged(self, threshold: int) -> Iterable[RiskScoreRecord]:

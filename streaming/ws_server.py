@@ -143,8 +143,8 @@ class TokenBucket:
 class SequenceCounter:
     """Thread-safe monotonically increasing sequence numbers."""
 
-    def __init__(self):
-        self._seq = 0
+    def __init__(self) -> None:
+        self._seq: int = 0
         self._lock = threading.Lock()
 
     def next(self) -> int:
@@ -343,7 +343,9 @@ async def _handler(websocket) -> None:
         # 3. REGISTER CLIENT: Create queue and rate limiter
         # ─────────────────────────────────────────────────────────────────
 
-        client_queue = asyncio.Queue(maxlen=config.WS_CLIENT_QUEUE_DEPTH)
+        client_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
+            maxsize=config.WS_CLIENT_QUEUE_DEPTH
+        )
         rate_limiter = TokenBucket(config.WS_RATE_LIMIT_MSGS_PER_SECOND)
 
         with _clients_lock:
@@ -417,7 +419,7 @@ async def _extract_token(websocket) -> str | None:
     # Try Authorization header
     auth_header = websocket.request_headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
-        return auth_header[7:]
+        return str(auth_header[7:])
 
     # Try query parameter
     if websocket.request_headers.get("Path"):

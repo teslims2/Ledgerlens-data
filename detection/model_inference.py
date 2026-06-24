@@ -23,6 +23,7 @@ import json
 import math
 import os
 import statistics
+from typing import Any, cast
 
 import joblib
 import numpy as np
@@ -50,12 +51,12 @@ _CONSENSUS_WINDOW = 10  # two models must be within this many points of each oth
 try:
     from prometheus_client import Counter
 
-    bft_divergence_detected_total = Counter(
+    bft_divergence_detected_total: Counter | None = Counter(
         "bft_divergence_detected_total",
         "Number of times BFT divergence was detected during ensemble scoring",
     )
 except Exception:  # pragma: no cover
-    bft_divergence_detected_total = None  # type: ignore[assignment]
+    bft_divergence_detected_total = None
 
 
 def _increment_bft_counter() -> None:
@@ -193,7 +194,7 @@ class RiskScorer:
         path = os.path.join(self.model_dir, "model_metadata.json")
         if os.path.exists(path):
             with open(path) as f:
-                return json.load(f)
+                return cast(dict[Any, Any], json.load(f))
         return None
 
     def _load_models(self) -> dict:
@@ -358,7 +359,7 @@ def _score_one(wallet: str) -> dict:
     data = resp.json()
 
     balances = data.get("balances", [])
-    native = next((b for b in balances if b.get("asset_type") == "native"), {})
+    native: dict[str, Any] = next((b for b in balances if b.get("asset_type") == "native"), {})
     xlm_balance = float(native.get("balance", 0))
 
     # Placeholder — replace with RiskScorer.score() once feature pipeline wired in

@@ -104,11 +104,6 @@ def compute_feature_schema_hash(feature_columns: list[str]) -> str:
     return f"sha256:{hashlib.sha256(schema_str.encode()).hexdigest()}"
 
 
-LABEL_DISTRIBUTION_BASELINE_PATH = os.path.join(
-    config.MODEL_DIR, "label_distribution_baseline.json"
-)
-
-
 def load_training_data(path: str) -> pd.DataFrame:
     """Load a labelled feature matrix (output of `build_feature_matrix` plus
     a `label` column: 1 = wash trading, 0 = legitimate)."""
@@ -155,7 +150,7 @@ def detect_label_poisoning(
         baseline = json.load(f)
 
     baseline_ratio = baseline.get("wash_trade_ratio", current_ratio)
-    return abs(current_ratio - baseline_ratio) > threshold
+    return bool(abs(current_ratio - baseline_ratio) > threshold)
 
 
 def _adversarial_augment(
@@ -327,33 +322,39 @@ def save_training_artifacts(
     logger.info("Saved model metadata to %s", metadata_path)
 
 
-def save_metrics_report(
-    results: dict,
+def save_training_artifacts(
+    training_output: dict,
+    data_path: str,
     model_dir: str | None = None,
-    extra: dict | None = None,
-) -> str:
-    """Write metrics (plus optional *extra* provenance fields) to metrics.json."""
+) -> None:
+    """Write metrics.json and model_metadata.json to the model directory."""
     model_dir = model_dir or config.MODEL_DIR
     os.makedirs(model_dir, exist_ok=True)
-    path = os.path.join(model_dir, "metrics.json")
 
-    payload: dict = {name: result["metrics"] for name, result in results.items()}
+    results = training_output["results"]
+    feature_columns = training_output["feature_columns"]
+    feature_distributions = training_output.get("feature_distributions")
 
-    for name in results:
-        artifact_path = os.path.join(model_dir, f"{name}.joblib")
-        if os.path.exists(artifact_path):
-            sha = hashlib.sha256()
-            with open(artifact_path, "rb") as f:
-                for chunk in iter(lambda: f.read(65536), b""):
-                    sha.update(chunk)
-            payload[name]["artifact_sha256"] = sha.hexdigest()
+    metrics_path = os.path.join(model_dir, "metrics.json")
+    with open(metrics_path, "w") as f:
+        json.dump({name: result["metrics"] for name, result in results.items()}, f, indent=2)
 
-    if extra:
-        payload.update(extra)
+    metadata = {
+        "trained_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "data_path": data_path,
+        "n_training_rows": training_output["n_train"],
+        "n_test_rows": training_output["n_test"],
+        "feature_columns": feature_columns,
+        "feature_schema_hash": compute_feature_schema_hash(feature_columns),
+        "model_names": list(results.keys()),
+        "python_version": sys.version.split()[0],
+        "ledgerlens_version": "0.2.0",
+        "feature_distributions": feature_distributions,
+    }
 
-    with open(path, "w") as f:
-        json.dump(payload, f, indent=2)
-    return path
+    metadata_path = os.path.join(model_dir, "model_metadata.json")
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
 
 
 def parse_args() -> argparse.Namespace:

@@ -39,7 +39,7 @@ class StreamingPipeline:
     def __init__(
         self,
         buffer: FeatureBuffer,
-        scorer: StreamingScorer,
+        scorer: StreamingScorer | None,
         dispatcher: AlertDispatcher,
         pairs: list[tuple[str, str]] | None = None,
         amm_pools: list[str] | None = None,
@@ -55,6 +55,7 @@ class StreamingPipeline:
         self._amm_pools = (
             list(amm_pools) if amm_pools is not None else list(config.WATCHED_AMM_POOLS)
         )
+        self._role = role
         self._stop_event = threading.Event()
         self._worker_threads: list[threading.Thread] = []
 
@@ -164,6 +165,7 @@ class StreamingPipeline:
                 logger.info("Kafka producer running with %d pair(s)", len(sdk_pairs))
 
         if self._role in ("all", "worker"):
+            assert self._scorer is not None
             worker = KafkaWorker(
                 self._scorer,
                 self._dispatcher,
@@ -231,6 +233,7 @@ class StreamingPipeline:
                         return
                     self._buffer.update(trade)
                     pair_id = trade.base_asset.pair_id(trade.counter_asset)
+                    assert self._scorer is not None
                     for wallet in (trade.base_account, trade.counter_account):
                         score = self._scorer.score_wallet(wallet, self._buffer)
                         if score is not None:
@@ -252,6 +255,7 @@ class StreamingPipeline:
                         return
                     self._buffer.update(trade)
                     pair_id = trade.base_asset.pair_id(trade.counter_asset)
+                    assert self._scorer is not None
                     for wallet in (trade.base_account, trade.counter_account):
                         if not wallet:
                             continue

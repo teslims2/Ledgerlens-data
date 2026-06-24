@@ -21,7 +21,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-import networkx as nx
 import pandas as pd
 
 from config import config
@@ -89,33 +88,67 @@ class TradeEvidence:
         }
 
 
-@dataclass(slots=True)
-class CausalAttribution:
-    minimal_exonerating_trades: list[str]
-    counterfactual_score: int
-    root_cause_wallet: str | None
-    causal_chain: list[dict]
-    interventional_score_if_no_wash: int
+
+@dataclass
+class TradeEvidence:
+    trade_id: str
+    ledger: int
+    base_account: str
+    counter_account: str
+    base_amount: float
+    counter_amount: float
+    asset_pair: str
+    horizon_url: str  # always constructed from config.HORIZON_URL
 
 
-@dataclass(slots=True)
-class PropagationContributor:
-    """A single wallet that contributed to the target wallet's propagated score."""
+@dataclass
+class ForensicReport:
+    report_id: str  # UUID v4
+    generated_at: str  # ISO 8601 UTC
+    wallet: str
+    asset_pair: str
+    risk_score: int
+    score_lower: int
+    score_upper: int
+    verdict: Literal["clean", "suspicious", "wash_trade"]
+    top_shap_features: list[dict]
+    benford_analysis: dict
+    trade_evidence: list[TradeEvidence]
+    model_metadata: dict
+    report_sha256: str = field(default="", init=False)
+    soroban_anchor_tx: str | None = field(default=None, init=False)
 
-    source_wallet: str
-    base_score: float
-    ppr_weight: float
-    contribution: float
-    fraction: float  # share of total propagated score from this source
+    def __post_init__(self) -> None:
+        self.report_sha256 = self._compute_sha256()
 
+    def _compute_sha256(self) -> str:
+        d = self._to_dict_without_hash()
+        return hashlib.sha256(
+            json.dumps(d, sort_keys=True, default=_json_default).encode()
+        ).hexdigest()
 
-@dataclass(slots=True)
-class PropagationPath:
-    """Propagation attribution section of a :class:`ForensicReport`."""
+    def _to_dict_without_hash(self) -> dict:
+        d = {
+            "report_id": self.report_id,
+            "generated_at": self.generated_at,
+            "wallet": self.wallet,
+            "asset_pair": self.asset_pair,
+            "risk_score": self.risk_score,
+            "score_lower": self.score_lower,
+            "score_upper": self.score_upper,
+            "verdict": self.verdict,
+            "top_shap_features": self.top_shap_features,
+            "benford_analysis": self.benford_analysis,
+            "trade_evidence": [asdict(t) for t in self.trade_evidence],
+            "model_metadata": self.model_metadata,
+            "soroban_anchor_tx": self.soroban_anchor_tx,
+        }
+        return d
 
-    propagated_risk: float
-    contributors: list[PropagationContributor] = field(default_factory=list)
-
+    def to_dict(self) -> dict:
+        d = self._to_dict_without_hash()
+        d["report_sha256"] = self.report_sha256
+        return d
 
 @dataclass
 class TradeEvidence:
@@ -243,9 +276,7 @@ class ForensicReportGenerator:
 
     MAX_EVIDENCE_TRADES = 20
 
-    def __init__(self, scorer: RiskScorer | None = None, explainer: ShapExplainer | None = None):
-        self._scorer = scorer or RiskScorer()
-        self._explainer = explainer or ShapExplainer()
+    MAX_EVIDENCE_TRADES = 20
 
     def generate(
         self,

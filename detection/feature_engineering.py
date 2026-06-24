@@ -237,7 +237,7 @@ def _add_calibrated_benford_features(
     )
 
 
-def _compute_residual_benford_for_windows(wallet_trades: pd.DataFrame) -> dict[int, dict]:
+def _compute_residual_benford_for_windows(wallet_trades: pd.DataFrame) -> dict[int, BenfordMetrics | dict[Any, Any]]:
     """Compute Benford metrics on STL residuals for each configured window.
 
     For each window, the trade sub-frame is decomposed via STL and Benford
@@ -251,7 +251,7 @@ def _compute_residual_benford_for_windows(wallet_trades: pd.DataFrame) -> dict[i
     timestamps = pd.to_datetime(wallet_trades["ledger_close_time"])
     ref = timestamps.max()
 
-    results: dict[int, dict] = {}
+    results: dict[int, BenfordMetrics | dict] = {}
     for hours in windows_hours:
         window_start = ref - pd.Timedelta(hours=hours)
         window_df = wallet_trades[(timestamps > window_start) & (timestamps <= ref)]
@@ -265,6 +265,19 @@ def _compute_residual_benford_for_windows(wallet_trades: pd.DataFrame) -> dict[i
             results[hours] = compute_benford_metrics(pos_residuals)
 
     return results
+
+
+def compute_graph_embedding_features(
+    wallet: str,
+    funding_graph: nx.DiGraph,
+    gnn_encoder: object,
+) -> dict[str, float]:
+    """Return GNN embedding features for *wallet*, with zero-fallback on failure."""
+    try:
+        emb = gnn_encoder.encode(funding_graph, wallet)  # type: ignore[attr-defined]
+        return {f"gnn_{i}": float(emb[i]) for i in range(len(emb))}
+    except Exception:
+        return {f"gnn_{i}": 0.0 for i in range(config.GNN_EMBEDDING_DIM)}
 
 
 def compute_order_cancellation_rate(wallet: str, orderbook_events: pd.DataFrame | None) -> float:
@@ -719,7 +732,7 @@ def build_feature_vector(
         else pd.Timestamp.now(tz="UTC")
     )
 
-    features = {"wallet": wallet}
+    features: dict[str, float | str] = {"wallet": wallet}
     features.update(compute_benford_features(wallet_trades, precomputed_metrics=benford_metrics))
     features.update(compute_trade_pattern_features(wallet, wallet_trades, orderbook_events))
     features.update(compute_volume_timing_features(wallet_trades))

@@ -1,4 +1,4 @@
-.PHONY: install lint format test run
+.PHONY: install lint format test run typecheck
 
 VENV_BIN := $(abspath .venv/bin)
 ifeq ($(wildcard $(VENV_BIN)/python),)

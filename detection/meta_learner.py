@@ -10,7 +10,7 @@ class LeafEmbeddingExtractor:
 
     def __init__(self, models: dict):
         self.models = models
-        self.feature_columns = None
+        self.feature_columns: list[str] | None = None
 
     def fit(self, X: pd.DataFrame):
         """Identify feature columns used by the models."""
@@ -119,6 +119,6 @@ class PrototypicalClassifier:
         max_neg_dist = np.maximum(-dist0_sq, -dist1_sq)
         exp0 = np.exp(-dist0_sq - max_neg_dist)
         exp1 = np.exp(-dist1_sq - max_neg_dist)
-        probs = exp1 / (exp0 + exp1)
+        probs: np.ndarray = exp1 / (exp0 + exp1)
 
         return probs

@@ -38,8 +38,8 @@ def _per_sample_losses(
 def _forward_logits(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
     output = model(x)
     if isinstance(output, tuple):
-        return output[0]
-    return output
+        return cast(torch.Tensor, output[0])
+    return cast(torch.Tensor, output)
 
 
 def membership_inference_success_rate(
