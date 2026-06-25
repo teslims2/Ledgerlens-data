@@ -59,6 +59,23 @@ class RiskScoreRecord(Base):
         return result
 
 
+class ShapQueryCount(Base):
+    """Per-wallet SHAP explanation query counter used for Rényi DP composition.
+
+    Each call to the differentially-private explanation endpoint increments the
+    wallet's count; once it exceeds the configured threshold the Gaussian noise
+    is scaled up to bound cumulative privacy leakage across repeated queries.
+    """
+
+    __tablename__ = "shap_query_counts"
+
+    wallet: Mapped[str] = mapped_column(String, primary_key=True)
+    query_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 def get_engine(db_url: str | None = None) -> Engine:
     """Create SQLAlchemy engine with connection pooling.
 

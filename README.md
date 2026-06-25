@@ -140,6 +140,46 @@ These columns are emitted only when community detection runs (i.e. a funding gra
 
 Models are trained with **SMOTE** to handle class imbalance and evaluated using **AUC-ROC**, **Precision-Recall AUC**, and **F1-score**. SHAP values provide interpretable explanations for every risk score.
 
+### Differentially-private SHAP explanations
+
+Exact per-feature SHAP contributions are essential for auditors but create a
+**model-inversion** risk: an adversary who queries a wallet, then re-queries it
+with one trade removed, can read off which individual trade moved the score from
+the delta in SHAP values — and repeated queries reconstruct the full anomaly
+profile. `detection/shap_explainer.py::ShapExplainer.explain_private` defends
+against this with the **Gaussian mechanism** (`detection/differential_privacy.py`):
+
+- Each SHAP value `s_i` gets calibrated noise `s_i + N(0, σ²)` with
+  `σ = Δ_i · √(2 ln(1.25/δ)) / ε`, where `Δ_i` is the feature's *sensitivity*
+  (max SHAP change from adding/removing one trade). Defaults: `ε = 1.0`,
+  `δ = 1e-5` (`DP_EPSILON` / `DP_DELTA`).
+- **Sensitivities** are estimated offline by `scripts/estimate_shap_sensitivity.py`
+  and stored in `models/shap_sensitivity.json` (per model, per feature). A
+  one-trade difference is then provably masked within the 2σ noise band.
+- **Rényi composition (moments accountant):** repeated queries against the same
+  wallet consume budget. The per-wallet query count is tracked in
+  `risk_score_store` (`ShapQueryCount`); once a wallet exceeds
+  `DP_RENYI_QUERY_THRESHOLD` (default 100) queries, `σ` is scaled by
+  `DP_RENYI_NOISE_MULTIPLIER` (default ×3).
+- **Audit mode:** `explain_private(..., private=False)` returns exact,
+  un-noised values and consumes no budget — for the authenticated, logged
+  internal audit API only. DP noise is applied to the public / unauthenticated
+  endpoint (`private=True`, the default).
+
+```bash
+# Estimate and persist per-feature SHAP sensitivities for the trained models
+python -m scripts.estimate_shap_sensitivity --model-dir ./models --data data/synthetic_dataset.parquet
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `DP_EPSILON` | `1.0` | Privacy budget ε |
+| `DP_DELTA` | `1e-5` | Privacy budget δ |
+| `DP_RENYI_QUERY_THRESHOLD` | `100` | Per-wallet query count above which noise is scaled up |
+| `DP_RENYI_NOISE_MULTIPLIER` | `3.0` | σ multiplier applied past the threshold |
+| `DP_DEFAULT_SENSITIVITY` | `0.05` | Fallback Δ when a feature is absent from `shap_sensitivity.json` |
+| `SHAP_SENSITIVITY_PATH` | `models/shap_sensitivity.json` | Sensitivity map location |
+
 ### Adversarial robustness
 
 A sophisticated operator who reverse-engineers the scoring system could perturb

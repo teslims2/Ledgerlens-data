@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from detection.persistence import RiskScoreRecord, get_session_factory
+from detection.persistence import RiskScoreRecord, ShapQueryCount, get_session_factory
 
 
 class RiskScoreStore:
@@ -83,3 +83,25 @@ class RiskScoreStore:
                     .order_by(RiskScoreRecord.score.desc())
                 )
             )
+
+    # ------------------------------------------------------------------
+    # SHAP query accounting (differential-privacy Rényi composition)
+    # ------------------------------------------------------------------
+
+    def increment_shap_query(self, wallet: str) -> int:
+        """Atomically increment and return `wallet`'s SHAP query count."""
+        with self._session_factory() as session:
+            counter = session.get(ShapQueryCount, wallet)
+            if counter is None:
+                counter = ShapQueryCount(wallet=wallet, query_count=0)
+                session.add(counter)
+            counter.query_count += 1
+            new_count = counter.query_count
+            session.commit()
+            return new_count
+
+    def get_shap_query_count(self, wallet: str) -> int:
+        """Return `wallet`'s current SHAP query count (0 if never queried)."""
+        with self._session_factory() as session:
+            counter = session.get(ShapQueryCount, wallet)
+            return counter.query_count if counter is not None else 0
