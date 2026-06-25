@@ -6,6 +6,7 @@ Used by `run_pipeline.py` to persist `RiskScorer.score()` output for
 
 import time
 from collections.abc import Iterable
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
@@ -26,8 +27,10 @@ class RiskScoreStore:
         `risk_score` is the dict returned by `RiskScorer.score()`:
         ``{"score", "benford_flag", "ml_flag", "confidence"}`` plus the
         optional ``"propagated_risk"`` float produced by
-        :func:`detection.risk_propagation.propagate_risk_scores`.
-        ``"timestamp"`` is ignored — ``updated_at`` is set server-side.
+        :func:`detection.risk_propagation.propagate_risk_scores` and the
+        optional ``"ring_id"`` wash-trading ring grouping. ``"timestamp"`` is
+        ignored — ``updated_at`` is set server-side. When ``ring_id`` is absent
+        the existing value is preserved.
         """
         for attempt in range(5):
             try:
@@ -48,6 +51,8 @@ class RiskScoreStore:
                     existing.confidence = int(risk_score["confidence"])
                     if "propagated_risk" in risk_score:
                         existing.propagated_risk = float(risk_score["propagated_risk"])
+                    if "ring_id" in risk_score:
+                        existing.ring_id = risk_score["ring_id"]
 
                     session.commit()
                     session.refresh(existing)

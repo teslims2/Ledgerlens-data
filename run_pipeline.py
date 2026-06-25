@@ -29,7 +29,7 @@ from stellar_sdk import Asset as SdkAsset
 from config import config
 from detection.feature_engineering import build_feature_matrix
 from detection.risk_score_store import RiskScoreStore
-from detection.wallet_graph import build_funding_graph
+from detection.wallet_graph import build_funding_graph, detect_wash_trading_rings, ring_id_map
 from ingestion.account_activity_loader import load_accounts_activity
 from ingestion.historical_loader import (
     load_pair_to_dataframe,
@@ -155,6 +155,14 @@ def main() -> None:
             scored = feature_matrix[["wallet"] + mad_cols].copy()
             scored["benford_flag"] = (scored[mad_cols] > 0.015).any(axis=1)
 
+        # --- Stage 2d.5: wash-trading ring id per wallet ---
+        if funding_graph is not None and funding_graph.number_of_nodes() > 0:
+            community_map = detect_wash_trading_rings(funding_graph)
+            rid_map = ring_id_map(community_map, funding_graph)
+        else:
+            rid_map = {}
+        scored["ring_id"] = [rid_map.get(w) for w in scored["wallet"]]
+
         # --- Stage 2e: persist + flag ---
         if "score" in scored:
             flagged = scored[scored["score"] >= config.RISK_SCORE_FLAG_THRESHOLD]
@@ -169,6 +177,7 @@ def main() -> None:
                             "benford_flag": row["benford_flag"],
                             "ml_flag": row["ml_flag"],
                             "confidence": row["confidence"],
+                            "ring_id": row.get("ring_id"),
                         },
                     )
                 logger.info("[pair=%s] Persisted %d scored wallets", pair_id, len(scored))

@@ -98,6 +98,7 @@ Benford signals alone aren't definitive — legitimate high-frequency market mak
 - Funding source similarity score *(legacy scalar — kept for model backwards compat)*
 - Network centrality within trading cluster graphs *(legacy scalar — kept for model backwards compat)*
 - Account age at time of trading activity
+- Wash-trading ring membership (`in_wash_trading_ring`, `ring_size`, `ring_internal_density`) — see [Wallet Graph Features](#wallet-graph-features-multi-hop--ring-detection) below
 
 **GNN Embedding Features (default 32 dims)**
 - `gnn_0` … `gnn_31`: GraphSAGE embedding of the wallet node in the combined funding + co-trade graph, capturing multi-hop ring structure that pairwise Jaccard similarity misses.  Computed by `detection/gnn_encoder.py`; defaults to all-zeros before the first training run.
@@ -110,6 +111,24 @@ Benford signals alone aren't definitive — legitimate high-frequency market mak
 - **Cross-pair volume correlation** (-1 to 1): Pearson correlation of trade volumes across pairs, bucketed by minute. Coordinated wash traders' volumes spike together; legitimate traders' pair-specific volumes are uncorrelated.
 - **Pair diversity score** (0–1): Shannon entropy of volume distribution across pairs, normalized. High entropy = volume spread across many pairs (market maker); low entropy = concentrated on one or two pairs.
 - **Cross-pair MAD consistency**: Standard deviation of Benford MAD scores across pairs. Low values mean all pairs have similar Benford conformity (consistent wash-trading pattern). High values indicate mixed conformity (concentrated on specific pairs).
+
+#### Wallet Graph Features (multi-hop + ring detection)
+
+`detection/wallet_graph.py` builds a directed funding graph (`funding_account → account_id`) from on-chain account activity and derives both per-wallet and topological (ring-level) signals.
+
+**Multi-hop ancestor traversal.** Real wash-trading rings insert 2–4 intermediate accounts between the controlling wallet and the trading wallets to evade single-hop metrics. `multi_hop_ancestors(graph, wallet, max_depth)` performs a bounded breadth-first traversal over predecessor (funding) edges up to `max_depth` hops (default `WALLET_GRAPH_MAX_DEPTH=4`). A `visited` set guarantees each node is expanded once, so traversal is linear in the reachable subgraph and safe on cyclic graphs. `funding_source_similarity` uses this traversal so two wallets that trace back to a common funder several hops away are still flagged as related.
+
+**Community detection (Louvain).** `detect_wash_trading_rings(graph, resolution, min_ring_size, seed)` converts the funding graph to an undirected graph and applies the [Louvain](https://python-louvain.readthedocs.io/) modularity algorithm (`python-louvain`) with a **fixed seed** (`WASH_RING_LOUVAIN_SEED=42`) so community assignments are deterministic in CI. Communities smaller than `min_ring_size` (default 3) are not treated as rings — their wallets get community id `-1`. `ring_statistics` summarises each ring as `{ring_id, ring_size, internal_edge_density, avg_funding_depth}`, where `internal_edge_density` is the fraction of possible intra-ring undirected edges that actually exist (1.0 = a fully connected clique).
+
+**New feature columns** (added to `compute_wallet_graph_features` when a funding graph is available):
+
+| Feature | Type | Description |
+|---|---|---|
+| `in_wash_trading_ring` | bool | `True` when the wallet belongs to a detected community of size ≥ `min_ring_size` |
+| `ring_size` | int | Number of wallets in the wallet's ring (0 if not in a ring) |
+| `ring_internal_density` | float | Internal edge density of the wallet's ring (0.0 if not in a ring) |
+
+These columns are emitted only when community detection runs (i.e. a funding graph is supplied), so feature schemas for graph-less flows are unchanged.
 
 ### Models
 
@@ -503,6 +522,17 @@ pub struct RiskScore {
 Produced in this repo by `detection/model_inference.py::RiskScorer.score()`.
 Mirrors `ledgerlens-contract`'s `submit_score` payload and
 `ledgerlens-api`'s `/score/{wallet}/{pair}` response.
+
+**`ring_id`** (API/storage only, not on-chain): each persisted `RiskScore`
+record additionally carries a nullable `ring_id: str | None` — a stable
+`"ring_<hash_of_member_set>"` identifier grouping every wallet found in the
+same wash-trading ring by community detection (see
+[Wallet Graph Features](#wallet-graph-features-multi-hop--ring-detection)).
+It is `NULL` when the wallet is not part of any detected ring, lets the API and
+dashboard group wallets by ring, and is **not** part of the on-chain `RiskScore`
+struct. Databases created before this field was introduced are upgraded with
+`python -m scripts.migrate_add_ring_id` (a backward-compatible `ALTER TABLE`;
+existing rows get `ring_id = NULL`).
 
 #### Asset pair identifier
 

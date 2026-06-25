@@ -39,6 +39,9 @@ class RiskScoreRecord(Base):
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Non-breaking addition: NULL means propagation has not been run yet.
     propagated_risk: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    # Stable wash-trading ring id ("ring_<hash>") grouping wallets in the same
+    # detected community; NULL when the wallet is not part of any ring.
+    ring_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True, default=None)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

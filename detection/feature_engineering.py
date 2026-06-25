@@ -29,7 +29,12 @@ from detection.benford_engine import (
     cross_pair_benford_consistency,
 )
 from detection.streaming_benford import StreamingBenfordSketch
-from detection.wallet_graph import compute_wallet_graph_metrics
+from detection.wallet_graph import (
+    NO_RING,
+    build_ring_statistics,
+    compute_wallet_graph_metrics,
+    detect_wash_trading_rings,
+)
 from ingestion.data_models import AccountActivity
 
 FEATURE_DESCRIPTIONS: dict[str, str] = {
@@ -237,7 +242,9 @@ def _add_calibrated_benford_features(
     )
 
 
-def _compute_residual_benford_for_windows(wallet_trades: pd.DataFrame) -> dict[int, BenfordMetrics | dict[Any, Any]]:
+def _compute_residual_benford_for_windows(
+    wallet_trades: pd.DataFrame,
+) -> dict[int, BenfordMetrics | dict[Any, Any]]:
     """Compute Benford metrics on STL residuals for each configured window.
 
     For each window, the trade sub-frame is decomposed via STL and Benford
@@ -436,12 +443,20 @@ def compute_wallet_graph_features(
     activity: AccountActivity | None,
     reference_time: pd.Timestamp,
     funding_graph: nx.DiGraph | None = None,
+    community_map: dict[str, int] | None = None,
+    ring_stats: dict[int, dict] | None = None,
 ) -> dict:
-    """Funding-source similarity, network centrality, account age.
+    """Funding-source similarity, network centrality, account age, ring signals.
 
     `funding_source_similarity` and `network_centrality` are computed from
     `funding_graph` (see `detection.wallet_graph.build_funding_graph`) when
     provided, and default to `0.0` otherwise.
+
+    When `community_map` (wallet -> community_id, from
+    `detect_wash_trading_rings`) is supplied, three wash-trading ring features
+    are added: `in_wash_trading_ring`, `ring_size`, and `ring_internal_density`.
+    They are omitted entirely when no community map is available, so flows
+    without a funding graph keep their existing feature schema unchanged.
     """
     account_age_days = 0.0
     if activity is not None:
@@ -454,9 +469,38 @@ def compute_wallet_graph_features(
         else {"funding_source_similarity": 0.0, "network_centrality": 0.0}
     )
 
-    return {
+    features = {
         **graph_metrics,
         "account_age_days": float(account_age_days),
+    }
+
+    if community_map is not None:
+        features.update(_ring_features(wallet, community_map, ring_stats))
+
+    return features
+
+
+def _ring_features(
+    wallet: str, community_map: dict[str, int], ring_stats: dict[int, dict] | None
+) -> dict:
+    """Build the three ring features for `wallet` from the community map."""
+    community_id = community_map.get(wallet, NO_RING)
+    in_ring = community_id != NO_RING
+
+    ring_size = 0
+    internal_density = 0.0
+    if in_ring:
+        stats = (ring_stats or {}).get(community_id)
+        if stats is not None:
+            ring_size = stats["ring_size"]
+            internal_density = stats["internal_edge_density"]
+        else:
+            ring_size = sum(1 for cid in community_map.values() if cid == community_id)
+
+    return {
+        "in_wash_trading_ring": bool(in_ring),
+        "ring_size": int(ring_size),
+        "ring_internal_density": float(internal_density),
     }
 
 
@@ -714,6 +758,8 @@ def build_feature_vector(
     gnn_encoder=None,
     benford_metrics: dict | None = None,
     pair_benford_sketches: dict | None = None,
+    community_map: dict[str, int] | None = None,
+    ring_stats: dict[int, dict] | None = None,
 ) -> dict:
     """Assemble the full feature row for a single wallet.
 
@@ -736,7 +782,11 @@ def build_feature_vector(
     features.update(compute_benford_features(wallet_trades, precomputed_metrics=benford_metrics))
     features.update(compute_trade_pattern_features(wallet, wallet_trades, orderbook_events))
     features.update(compute_volume_timing_features(wallet_trades))
-    features.update(compute_wallet_graph_features(wallet, activity, reference_time, funding_graph))
+    features.update(
+        compute_wallet_graph_features(
+            wallet, activity, reference_time, funding_graph, community_map, ring_stats
+        )
+    )
     if all_pairs_df is not None:
         features.update(
             compute_cross_asset_features(
@@ -817,6 +867,8 @@ def build_feature_matrix(
     all_pairs_df: pd.DataFrame | None = None,
     amm_trades: pd.DataFrame | None = None,
     gnn_embeddings: dict[str, dict] | None = None,
+    community_map: dict[str, int] | None = None,
+    ring_stats: dict[int, dict] | None = None,
 ) -> pd.DataFrame:
     """Build a feature matrix with one row per wallet observed in `trades_df`.
 
@@ -826,9 +878,19 @@ def build_feature_matrix(
     the same as `trades_df` or a superset with a `pair_id` column) enables
     cross-asset coordination features. `amm_trades` (optional) enables
     cross-venue coordination features.
+
+    When `funding_graph` is provided (and `community_map` is not supplied
+    explicitly), wash-trading rings are detected once for the whole graph via
+    `detect_wash_trading_rings`; the resulting community map and ring statistics
+    add the `in_wash_trading_ring`, `ring_size`, and `ring_internal_density`
+    columns. Without a funding graph the feature schema is unchanged.
     """
     if trades_df.empty:
         return pd.DataFrame()
+
+    if funding_graph is not None and community_map is None:
+        community_map = detect_wash_trading_rings(funding_graph)
+        ring_stats = build_ring_statistics(community_map, funding_graph)
 
     wallets = pd.unique(trades_df[["base_account", "counter_account"]].values.ravel())
 
@@ -842,6 +904,8 @@ def build_feature_matrix(
             funding_graph=funding_graph,
             all_pairs_df=all_pairs_df if all_pairs_df is not None else trades_df,
             amm_trades=amm_trades,
+            community_map=community_map,
+            ring_stats=ring_stats,
         )
         if gnn_embeddings and wallet in gnn_embeddings:
             row.update(gnn_embeddings[wallet])

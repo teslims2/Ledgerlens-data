@@ -92,6 +92,13 @@ class Config:
     # Forensic reporting
     REPORT_CONCURRENCY: int = int(os.getenv("REPORT_CONCURRENCY", "4"))
 
+    # Wallet funding graph — multi-hop traversal + wash-trading ring detection
+    WALLET_GRAPH_MAX_DEPTH: int = int(os.getenv("WALLET_GRAPH_MAX_DEPTH", "4"))
+    WASH_RING_MIN_SIZE: int = int(os.getenv("WASH_RING_MIN_SIZE", "3"))
+    WASH_RING_RESOLUTION: float = float(os.getenv("WASH_RING_RESOLUTION", "1.0"))
+    # Fixed seed keeps Louvain community detection deterministic in CI.
+    WASH_RING_LOUVAIN_SEED: int = int(os.getenv("WASH_RING_LOUVAIN_SEED", "42"))
+
     # Real-time streaming / alerting
     # STREAMING_BACKEND selects the ingestion transport:
     #   "sse"   — existing thread-per-pair Horizon SSE pipeline (default, no Kafka)
