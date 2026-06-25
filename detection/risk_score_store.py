@@ -23,7 +23,9 @@ class RiskScoreStore:
 
         `risk_score` is the dict returned by `RiskScorer.score()`:
         `{"score", "benford_flag", "ml_flag", "confidence"}` (and optionally
-        `"timestamp"`, which is ignored — `updated_at` is set server-side).
+        `"timestamp"`, which is ignored — `updated_at` is set server-side, and
+        `"ring_id"`, the wash-trading ring grouping). When `ring_id` is absent
+        the existing value is preserved.
         """
         with self._session_factory() as session:
             existing = session.scalar(
@@ -40,6 +42,8 @@ class RiskScoreStore:
             existing.benford_flag = bool(risk_score["benford_flag"])
             existing.ml_flag = bool(risk_score["ml_flag"])
             existing.confidence = int(risk_score["confidence"])
+            if "ring_id" in risk_score:
+                existing.ring_id = risk_score["ring_id"]
 
             session.commit()
             session.refresh(existing)

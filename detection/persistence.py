@@ -33,6 +33,9 @@ class RiskScoreRecord(Base):
     benford_flag: Mapped[bool] = mapped_column(nullable=False, default=False)
     ml_flag: Mapped[bool] = mapped_column(nullable=False, default=False)
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Stable wash-trading ring id ("ring_<hash>") grouping wallets in the same
+    # detected community; NULL when the wallet is not part of any ring.
+    ring_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True, default=None)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
