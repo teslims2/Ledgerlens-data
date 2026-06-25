@@ -57,6 +57,8 @@ class Config:
         os.getenv("BENFORD_WINDOWS_HOURS", "1,4,24,168,720")
     )
 
+    ASSET_BENFORD_WINDOWS: dict[str, list[int]] = {}
+
     CROSS_PAIR_SYNCHRONY_WINDOW_SECONDS: int = int(
         os.getenv("CROSS_PAIR_SYNCHRONY_WINDOW_SECONDS", "30")
     )
@@ -203,5 +205,32 @@ class Config:
         if errors:
             raise OSError("LedgerLens configuration errors:\n- " + "\n- ".join(errors))
 
+    @classmethod
+    def load_asset_benford_windows(cls):
+        import glob
+        import json
+        cls.ASSET_BENFORD_WINDOWS = {}
+        model_dir = cls.MODEL_DIR or "./models"
+        pattern = os.path.join(model_dir, "*_benford_windows.json")
+        for filepath in glob.glob(pattern):
+            filename = os.path.basename(filepath)
+            asset_key = filename[:-len("_benford_windows.json")]
+            try:
+                with open(filepath, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and "asset" in data and "windows" in data:
+                        cls.ASSET_BENFORD_WINDOWS[data["asset"]] = [int(w) for w in data["windows"]]
+                    elif isinstance(data, list):
+                        if "_" in asset_key:
+                            parts = asset_key.split("_", 1)
+                            asset_name = f"{parts[0]}:{parts[1]}"
+                        else:
+                            asset_name = asset_key
+                        cls.ASSET_BENFORD_WINDOWS[asset_name] = [int(w) for w in data]
+                        cls.ASSET_BENFORD_WINDOWS[asset_key] = [int(w) for w in data]
+            except Exception:
+                pass
+
 
 config = Config()
+Config.load_asset_benford_windows()

@@ -384,6 +384,11 @@ def parse_args() -> argparse.Namespace:
             "Requires torch and torch_geometric to be installed."
         ),
     )
+    parser.add_argument(
+        "--raw-trades-path",
+        default="data/raw_trades.parquet",
+        help="Path to raw trades Parquet file for Benford window optimization"
+    )
     return parser.parse_args()
 
 
@@ -394,6 +399,51 @@ def main() -> None:
     logger.info("Loading training data from %s", args.data_path)
     df = load_training_data(args.data_path)
     logger.info("Loaded %d rows", len(df))
+
+    # Run Benford window optimization if raw trades are available
+    raw_trades_path = args.raw_trades_path
+    if os.path.exists(raw_trades_path):
+        logger.info("Running offline Benford window optimization per asset...")
+        try:
+            from detection.benford_window_optimizer import optimize_windows_for_asset, estimate_trades_per_hour, get_candidate_grid
+            trades_df = pd.read_parquet(raw_trades_path)
+            assets = set()
+            if "base_asset" in trades_df.columns:
+                assets.update(trades_df["base_asset"].dropna().unique())
+            if "counter_asset" in trades_df.columns:
+                assets.update(trades_df["counter_asset"].dropna().unique())
+
+            os.makedirs(model_dir, exist_ok=True)
+            for asset in sorted(list(assets)):
+                asset_mask = (trades_df["base_asset"] == asset) | (trades_df["counter_asset"] == asset)
+                asset_trades = trades_df[asset_mask]
+                wallets_with_trades = set(pd.unique(asset_trades[["base_account", "counter_account"]].values.ravel()))
+                asset_labelled_df = df[df["wallet"].isin(wallets_with_trades)] if "wallet" in df.columns else pd.DataFrame()
+
+                if len(asset_labelled_df) < 5:
+                    tph = estimate_trades_per_hour(asset_trades)
+                    min_trades = getattr(config, "MIN_TRADES_FOR_SCORING", 20)
+                    candidates = get_candidate_grid(tph, min_trades)
+                    res = set(candidates)
+                    for fallback in [1, 4, 24, 168, 720]:
+                        if len(res) >= 5:
+                            break
+                        res.add(fallback)
+                    final_windows = sorted(list(res))[:5]
+                else:
+                    final_windows = optimize_windows_for_asset(asset, asset_trades, asset_labelled_df)
+
+                clean_name = asset.replace(":", "_").replace("/", "_")
+                output_path = os.path.join(model_dir, f"{clean_name}_benford_windows.json")
+                with open(output_path, "w") as f:
+                    json.dump({
+                        "asset": asset,
+                        "windows": final_windows
+                    }, f, indent=2)
+                logger.info("Optimized Benford window schedule for asset %s: %s", asset, final_windows)
+            config.load_asset_benford_windows()
+        except Exception as e:
+            logger.error("Failed to run Benford window optimization: %s", e)
 
     data_sha = sha256_dataframe(df)
     label_dist = df["label"].value_counts().to_dict()

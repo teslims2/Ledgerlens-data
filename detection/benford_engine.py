@@ -29,9 +29,13 @@ class BenfordMetrics:
     sample_size: int
 
     def __getitem__(self, key: str) -> Any:
+        if key == "z_max":
+            return max(self.z_scores.values(), default=np.nan)
         return getattr(self, key)
 
     def get(self, key: str, default: Any = None) -> Any:
+        if key == "z_max":
+            return max(self.z_scores.values(), default=np.nan)
         return getattr(self, key, default)
 
 
@@ -127,13 +131,24 @@ def compute_benford_metrics(amounts: pd.Series) -> BenfordMetrics:
 
     Returns a BenfordMetrics dataclass (backward compatible with dict access).
     """
+    from config import config
+    n = int((amounts > 0).sum())
+    if n < config.MIN_TRADES_FOR_SCORING:
+        return BenfordMetrics(
+            chi_square=np.nan,
+            mad=np.nan,
+            mad_nonconforming=False,
+            z_scores={d: np.nan for d in range(1, 10)},
+            sample_size=n,
+        )
+
     mad = mad_score(amounts)
     return BenfordMetrics(
         chi_square=chi_square_statistic(amounts),
         mad=mad,
         mad_nonconforming=mad > MAD_NONCONFORMITY_THRESHOLD,
         z_scores=z_scores(amounts),
-        sample_size=int((amounts > 0).sum()),
+        sample_size=n,
     )
 
 
@@ -143,6 +158,7 @@ def compute_benford_metrics_for_windows(
     time_col: str = "ledger_close_time",
     windows_hours: list[int] | None = None,
     reference_time: pd.Timestamp | None = None,
+    asset: str | None = None,  # NEW: looks up per-asset windows
 ) -> dict[int, BenfordMetrics]:
     """Compute Benford metrics over multiple trailing windows ending at
     `reference_time` (defaults to the max timestamp in `df`).
@@ -151,8 +167,24 @@ def compute_benford_metrics_for_windows(
     """
     if windows_hours is None:
         from config import config
+        # Infer asset if not provided
+        if asset is None and not df.empty:
+            for col in ["base_asset", "counter_asset"]:
+                if col in df.columns:
+                    unique_assets = df[col].dropna().unique()
+                    for a in unique_assets:
+                        if a in getattr(config, "ASSET_BENFORD_WINDOWS", {}):
+                            asset = a
+                            break
+                    if asset:
+                        break
+            if asset is None and "base_asset" in df.columns:
+                asset = df["base_asset"].mode().iloc[0] if not df["base_asset"].empty else None
 
-        windows_hours = config.BENFORD_WINDOWS_HOURS
+        if asset and hasattr(config, "ASSET_BENFORD_WINDOWS") and asset in config.ASSET_BENFORD_WINDOWS:
+            windows_hours = config.ASSET_BENFORD_WINDOWS[asset]
+        else:
+            windows_hours = config.BENFORD_WINDOWS_HOURS
 
     if df.empty:
         return {w: compute_benford_metrics(pd.Series(dtype=float)) for w in windows_hours}

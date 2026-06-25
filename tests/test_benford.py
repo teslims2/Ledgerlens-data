@@ -54,3 +54,54 @@ def test_z_scores_nonnegative():
 
 def test_benford_expected_sums_to_one():
     assert abs(sum(BENFORD_EXPECTED.values()) - 1.0) < 1e-9
+
+
+def test_minimum_sample_guard():
+    from config import config
+    from detection.benford_engine import compute_benford_metrics
+    orig_min = config.MIN_TRADES_FOR_SCORING
+    try:
+        config.MIN_TRADES_FOR_SCORING = 20
+        # Under threshold (10 < 20) -> should emit NaNs
+        amounts = pd.Series([123.0] * 10)
+        metrics = compute_benford_metrics(amounts)
+        assert np.isnan(metrics.chi_square)
+        assert np.isnan(metrics.mad)
+        assert np.isnan(metrics["z_max"])
+        assert metrics.sample_size == 10
+
+        # Over threshold (25 >= 20) -> should emit valid values
+        amounts_valid = pd.Series([123.0] * 25)
+        metrics_valid = compute_benford_metrics(amounts_valid)
+        assert not np.isnan(metrics_valid.chi_square)
+        assert not np.isnan(metrics_valid.mad)
+        assert not np.isnan(metrics_valid["z_max"])
+        assert metrics_valid.sample_size == 25
+    finally:
+        config.MIN_TRADES_FOR_SCORING = orig_min
+
+
+def test_optimizer_returns_ascending_windows():
+    from detection.benford_window_optimizer import optimize_windows_for_asset
+
+    times = pd.date_range("2024-01-01", periods=100, freq="1h")
+    trades = pd.DataFrame({
+        "ledger_close_time": times.astype(str),
+        "amount": np.random.uniform(1.0, 1000.0, size=100),
+        "price": [1.0] * 100,
+        "base_account": ["wallet_a"] * 50 + ["wallet_b"] * 50,
+        "counter_account": ["wallet_c"] * 100,
+        "base_asset": ["XLM:native"] * 100,
+        "counter_asset": ["USDC:GABC"] * 100
+    })
+
+    labelled = pd.DataFrame({
+        "wallet": ["wallet_a", "wallet_b", "wallet_c"],
+        "label": [1.0, 0.0, 0.0]
+    })
+
+    windows = optimize_windows_for_asset("XLM:native", trades, labelled)
+
+    assert len(windows) == 5
+    assert all(windows[i] <= windows[i+1] for i in range(len(windows)-1))
+
