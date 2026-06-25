@@ -136,6 +136,7 @@ def propagate_risk_scores(
     alpha: float = 0.15,
     max_iterations: int = 50,
     convergence_tol: float = 1e-6,
+    db_url: str | None = None,
 ) -> dict[str, float]:
     """Return propagated risk scores for **all** nodes in the graph.
 
@@ -159,6 +160,8 @@ def propagate_risk_scores(
         reached in < 20 steps.
     convergence_tol:
         L1 norm threshold for declaring convergence.
+    db_url:
+        Optional SQLite database URL to resolve cross-chain identity risk propagation.
 
     Returns
     -------
@@ -171,6 +174,18 @@ def propagate_risk_scores(
 
     if combined.number_of_nodes() == 0:
         return {}
+
+    # Update base scores with cross-chain linked risk scores
+    updated_base_scores = base_scores.copy()
+    try:
+        from detection.cross_chain.resolver import resolve_risk_scores
+        for node in combined.nodes():
+            ext_scores = resolve_risk_scores(node, db_url=db_url)
+            if ext_scores:
+                max_ext = max(ext_scores.values())
+                updated_base_scores[node] = max(updated_base_scores.get(node, 0.0), max_ext)
+    except Exception as e:
+        logger.warning("Failed to propagate cross-chain risk scores: %s", e)
 
     nodes: list[str] = list(combined.nodes())
     n = len(nodes)
@@ -197,7 +212,7 @@ def propagate_risk_scores(
     # Accumulate weighted PPR vectors from all seed wallets
     propagated = np.zeros(n, dtype=np.float64)
 
-    seeds_in_graph = {w: s for w, s in base_scores.items() if w in node_idx and s > 0}
+    seeds_in_graph = {w: s for w, s in updated_base_scores.items() if w in node_idx and s > 0}
 
     if not seeds_in_graph:
         return {w: 0.0 for w in nodes}
@@ -229,6 +244,7 @@ def propagation_attribution(
     max_iterations: int = 50,
     convergence_tol: float = 1e-6,
     top_n: int = 5,
+    db_url: str | None = None,
 ) -> list[dict]:
     """Return which high-risk ancestors/descendants contributed to *wallet*'s
     propagated score, and what fraction each contributed.
@@ -246,6 +262,18 @@ def propagation_attribution(
 
     if wallet not in combined or combined.number_of_nodes() == 0:
         return []
+
+    # Update base scores with cross-chain linked risk scores
+    updated_base_scores = base_scores.copy()
+    try:
+        from detection.cross_chain.resolver import resolve_risk_scores
+        for node in combined.nodes():
+            ext_scores = resolve_risk_scores(node, db_url=db_url)
+            if ext_scores:
+                max_ext = max(ext_scores.values())
+                updated_base_scores[node] = max(updated_base_scores.get(node, 0.0), max_ext)
+    except Exception as e:
+        logger.warning("Failed to propagate cross-chain risk scores in attribution: %s", e)
 
     nodes: list[str] = list(combined.nodes())
     n = len(nodes)
@@ -268,7 +296,7 @@ def propagation_attribution(
     else:
         A_csr = csr_matrix((n, n), dtype=np.float64)
 
-    seeds_in_graph = {w: s for w, s in base_scores.items() if w in node_idx and s > 0}
+    seeds_in_graph = {w: s for w, s in updated_base_scores.items() if w in node_idx and s > 0}
     if not seeds_in_graph:
         return []
 
