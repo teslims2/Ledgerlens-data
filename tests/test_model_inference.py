@@ -1,5 +1,6 @@
 """Tests for detection/model_inference.py — BFT voting and RiskScorer."""
 
+import numpy as np
 import pytest
 
 from detection.model_inference import (
@@ -112,7 +113,7 @@ def test_bft_divergence_key_present_when_flagged(trained_models, monkeypatch):
             self.prob = prob
 
         def predict_proba(self, X):
-            return [[1 - self.prob, self.prob]]
+            return np.array([[1 - self.prob, self.prob]])
 
     scorer.models = {
         "random_forest": FakeModel(0.1),  # score=10
@@ -140,7 +141,7 @@ def test_bft_prometheus_counter_incremented_on_divergence(trained_models, monkey
             self.prob = prob
 
         def predict_proba(self, X):
-            return [[1 - self.prob, self.prob]]
+            return np.array([[1 - self.prob, self.prob]])
 
     scorer.models = {
         "random_forest": FakeModel(0.1),
@@ -202,7 +203,7 @@ def test_consensus_failure_score(trained_models, monkeypatch):
             self.prob = prob
 
         def predict_proba(self, X):
-            return [[1 - self.prob, self.prob]]
+            return np.array([[1 - self.prob, self.prob]])
 
     scorer.models = {
         "random_forest": FakeModel(0.0),  # 0

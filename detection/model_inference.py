@@ -122,6 +122,7 @@ class RiskScorer:
 
     def __init__(self, model_dir: str | None = None, weights: dict[str, float] | None = None):
         self.model_dir = model_dir or config.MODEL_DIR
+        self.weights = self._validate_weights(weights)
         self.list_override = ListOverride()
         self.metadata = self._load_metadata()
         self.models = self._load_models()
@@ -221,18 +222,6 @@ class RiskScorer:
         Raises if no models are loaded so callers (`score`,
         `score_continuous`) surface the same error.
         """
-        if isinstance(feature_row, pd.Series):
-            wallet = feature_row.get("wallet")
-            if wallet is not None:
-                override_val = self.list_override.check(wallet)
-                if override_val in (0, 100):
-                    return {
-                        "score": override_val,
-                        "benford_flag": False,
-                        "ml_flag": bool(override_val >= 50),
-                        "confidence": 100,
-                    }
-
         if not self.models:
             raise RuntimeError(
                 f"No trained models found in {self.model_dir}. Run model_training.py first."
@@ -263,37 +252,31 @@ class RiskScorer:
         X = feature_row[feature_cols].to_frame().T.astype(float)
         return [model.predict_proba(X)[0, 1] for model in self.models.values()]
 
-    def score_continuous(self, feature_row: pd.Series) -> float:
-        """Continuous ensemble risk score in `[0, 100]` (unrounded).
+    def _check_override(self, feature_row: pd.Series) -> dict | None:
+        wallet = feature_row.get("wallet") if isinstance(feature_row, pd.Series) else None
+        if wallet is None:
+            return None
+        override_val = self.list_override.check(wallet)
+        if override_val in (0, 100):
+            return {
+                "score": override_val,
+                "benford_flag": False,
+                "ml_flag": bool(override_val >= 50),
+                "confidence": 100,
+            }
+        return None
 
-        # Incorporate MAML adapter if available
-        if self.maml_adapter:
-            try:
-                import torch
+    def score(self, feature_row: pd.Series) -> dict:
+        """Compute the LedgerLens Risk Score for a single feature row.
 
-                emb = torch.from_numpy(self.extractor.transform(X)).float()
-                maml_prob = self.maml_adapter.predict_proba(emb)[0]
-                probs.append(float(maml_prob))
-                logger.debug("MAML adapter prediction: %.4f", maml_prob)
-            except Exception as e:
-                logger.warning("MAML scoring failed: %s", e)
-
-    def score_continuous_batch(self, X: pd.DataFrame) -> np.ndarray:
-        """Continuous ensemble scores for a batch of feature rows.
-
-        `X` must contain (at least) the model feature columns; non-feature
-        columns (`FEATURE_COLUMNS_EXCLUDE`) are dropped. Vectorised over the
-        batch so the adversarial tooling can evaluate every finite-difference
-        probe in one `predict_proba` call per model instead of one per row.
+        Returns a dict matching the on-chain `RiskScore` shape:
+            {score, benford_flag, ml_flag, confidence}
         """
-        if not self.models:
-            raise RuntimeError(
-                f"No trained models found in {self.model_dir}. " "Run model_training.py first."
-            )
-        feature_cols = [c for c in X.columns if c not in FEATURE_COLUMNS_EXCLUDE]
-        Xf = X[feature_cols].astype(float)
-        per_model = np.column_stack([m.predict_proba(Xf)[:, 1] for m in self.models.values()])
-        return per_model.mean(axis=1) * 100
+        override = self._check_override(feature_row)
+        if override is not None:
+            return override
+
+        probs = self._ensemble_probabilities(feature_row)
 
         if self.weights is not None:
             missing = set(self.weights) - set(self.models)
@@ -312,33 +295,82 @@ class RiskScorer:
                 "calibrated": True,
             }
 
-        result: dict = {}
+        scores_100 = [p * 100 for p in probs]
+        final_score, diverged = bft_trimmed_mean(scores_100)
+        if diverged:
+            logger.warning(
+                "BFT divergence detected — raw model scores: %s",
+                [round(s, 1) for s in scores_100],
+            )
+            _increment_bft_counter()
 
-        Returns a dict matching the on-chain `RiskScore` shape:
-            {score, benford_flag, ml_flag, confidence}
-        """
-        probs = self._ensemble_probabilities(feature_row)
-        avg_prob = _combine_probabilities(probs)
-
-            if diverged:
-                logger.warning(
-                    "BFT divergence detected — raw model scores: %s",
-                    [round(s, 1) for s in scores_100],
-                )
-                _increment_bft_counter()
-
-            avg_prob = final_score / 100.0
-
-            result = {
-                "score": int(round(final_score)),
+        if not _has_consensus(scores_100):
+            result: dict = {
+                "score": 100,
                 "benford_flag": _benford_flag(feature_row),
-                "ml_flag": bool(avg_prob >= ML_FLAG_THRESHOLD),
-                "confidence": _confidence_from_probs(probs, avg_prob),
+                "ml_flag": True,
+                "confidence": 0,
+                "consensus_failure": True,
             }
             if diverged:
                 result["bft_divergence"] = True
+            return result
 
+        avg_prob = final_score / 100.0
+        result = {
+            "score": int(round(final_score)),
+            "benford_flag": _benford_flag(feature_row),
+            "ml_flag": bool(avg_prob >= ML_FLAG_THRESHOLD),
+            "confidence": _confidence_from_probs(probs, avg_prob),
+        }
+        if diverged:
+            result["bft_divergence"] = True
         return result
+
+    def score_continuous(self, feature_row: pd.Series) -> float:
+        """Continuous ensemble risk score in `[0, 100]` (unrounded).
+
+        Mirrors `score()`'s combination logic (list-override short-circuit,
+        weighted average, or BFT trimmed mean) so that, absent a consensus
+        failure, `round(score_continuous(row)) == score(row)["score"]` holds.
+        Deliberately does *not* apply `score()`'s consensus-failure override
+        (snapping to 100): the adversarial-robustness tooling perturbs this
+        value via gradient/finite-difference search and needs a smooth
+        scalar, not a discontinuous step that can rise under attack when a
+        perturbation pushes models out of agreement.
+        """
+        override = self._check_override(feature_row)
+        if override is not None:
+            return float(override["score"])
+
+        probs = self._ensemble_probabilities(feature_row)
+
+        if self.weights is not None:
+            return 100.0 * sum(
+                self.weights.get(name, 0.0) * prob
+                for name, prob in zip(self.models, probs, strict=True)
+            )
+
+        scores_100 = [p * 100 for p in probs]
+        final_score, _ = bft_trimmed_mean(scores_100)
+        return final_score
+
+    def score_continuous_batch(self, X: pd.DataFrame) -> np.ndarray:
+        """Continuous ensemble scores for a batch of feature rows.
+
+        `X` must contain (at least) the model feature columns; non-feature
+        columns (`FEATURE_COLUMNS_EXCLUDE`) are dropped. Vectorised over the
+        batch so the adversarial tooling can evaluate every finite-difference
+        probe in one `predict_proba` call per model instead of one per row.
+        """
+        if not self.models:
+            raise RuntimeError(
+                f"No trained models found in {self.model_dir}. " "Run model_training.py first."
+            )
+        feature_cols = [c for c in X.columns if c not in FEATURE_COLUMNS_EXCLUDE]
+        Xf = X[feature_cols].astype(float)
+        per_model = np.column_stack([m.predict_proba(Xf)[:, 1] for m in self.models.values()])
+        return per_model.mean(axis=1) * 100
 
     def score_matrix(self, feature_matrix: pd.DataFrame) -> pd.DataFrame:
         """Score every row in a feature matrix."""
