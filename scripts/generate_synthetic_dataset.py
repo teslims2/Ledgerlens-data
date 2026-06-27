@@ -18,6 +18,7 @@ from typing import TextIO
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from config import config
 
@@ -67,7 +68,7 @@ def _generate_feature_level(
     n_legit = n_wallets // 2
 
     rows = []
-    for i in range(n_wallets):
+    for i in tqdm(range(n_wallets), desc="Generating wallets", unit="wallet"):
         is_wash = i >= n_legit
         row: dict[str, object] = {"wallet": f"GSYNTH{i:06d}"}
 
