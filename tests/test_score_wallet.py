@@ -112,6 +112,26 @@ def test_score_wallet_missing_models_exits_1(capsys, mock_ingestion):
         assert "model_training.py" in err
 
 
+def test_score_wallet_quiet_outputs_single_json_line_and_no_stderr(
+    capsys, mock_scorer, mock_ingestion, mock_explainer
+):
+    test_wallet = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    with patch(
+        "sys.argv", ["score_wallet.py", "--wallet", test_wallet, "--pair", "USDC:G...", "-q"]
+    ):
+        main()
+
+    out, err = capsys.readouterr()
+    assert err == ""
+
+    lines = out.strip().splitlines()
+    assert len(lines) == 1
+
+    data = json.loads(lines[0])
+    assert data["wallet"] == test_wallet
+    assert data["score"] == 83
+
+
 def test_score_wallet_causal_json_output_includes_causal_section(
     capsys, mock_scorer, mock_ingestion, mock_explainer
 ):

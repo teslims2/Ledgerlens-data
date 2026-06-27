@@ -13,6 +13,7 @@ SHAP feature attributions, and prints the result to stdout.
 
 import argparse
 import json
+import logging
 import re
 import sys
 import time
@@ -99,6 +100,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--json", action="store_true", help="Output result as JSON")
     parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help=(
+            "Suppress all log output and print only a single-line JSON result "
+            "to stdout (implies --json). Useful for shell pipelines."
+        ),
+    )
+    parser.add_argument(
         "--causal",
         action="store_true",
         help="Include causal attribution in the output",
@@ -134,6 +144,9 @@ def _parse_remove_trade_ids(
 
 def main() -> None:
     args = parse_args()
+
+    if args.quiet:
+        logging.disable(logging.CRITICAL)
 
     validate_wallet_address(args.wallet)
     base_asset, counter_asset = parse_asset_pair(args.pair)
@@ -257,7 +270,7 @@ def main() -> None:
             shap_explanations = []
 
     # 6. Output
-    if args.json:
+    if args.json or args.quiet:
         output = {
             "wallet": args.wallet,
             "asset_pair": args.pair,
@@ -269,7 +282,10 @@ def main() -> None:
         }
         if causal_result is not None:
             output["causal_attribution"] = causal_result
-        print(json.dumps(output, indent=2))
+        if args.quiet:
+            print(json.dumps(output, separators=(",", ":")))
+        else:
+            print(json.dumps(output, indent=2))
     else:
         status = "FLAGGED" if result["score"] >= config.RISK_SCORE_FLAG_THRESHOLD else "OK"
         print(f"Wallet:   {args.wallet}")
