@@ -182,6 +182,35 @@ class Config:
     GNN_HIDDEN_DIM: int = int(os.getenv("GNN_HIDDEN_DIM", "64"))
     GNN_NUM_LAYERS: int = int(os.getenv("GNN_NUM_LAYERS", "2"))
 
+    # -----------------------------------------------------------------------
+    # #302 — REST API
+    # -----------------------------------------------------------------------
+    # Bcrypt-hashed API keys, comma-separated.  Never log plaintext keys.
+    # Generate a hash: python -c "import bcrypt; print(bcrypt.hashpw(b'key', bcrypt.gensalt()).decode())"
+    API_KEYS: list[str] = [
+        k.strip()
+        for k in os.getenv("API_KEYS", "").split(",")
+        if k.strip()
+    ]
+    API_RATE_LIMIT_RPM: int = int(os.getenv("API_RATE_LIMIT_RPM", "60"))
+
+    # -----------------------------------------------------------------------
+    # #299 — Differential-privacy aggregation of training statistics
+    # -----------------------------------------------------------------------
+    DP_AGGREGATOR_EPSILON: float = float(os.getenv("DP_AGGREGATOR_EPSILON", "1.0"))
+    DP_AGGREGATOR_DELTA: float = float(os.getenv("DP_AGGREGATOR_DELTA", "1e-5"))
+
+    # -----------------------------------------------------------------------
+    # #301 — Causal discovery
+    # -----------------------------------------------------------------------
+    CAUSAL_DISCOVERY_TIMEOUT_SECONDS: int = int(
+        os.getenv("CAUSAL_DISCOVERY_TIMEOUT_SECONDS", "600")
+    )
+    CAUSAL_SIGNIFICANCE_LEVEL: float = float(
+        os.getenv("CAUSAL_SIGNIFICANCE_LEVEL", "0.05")
+    )
+    CAUSAL_MAX_COND_SET_SIZE: int = int(os.getenv("CAUSAL_MAX_COND_SET_SIZE", "3"))
+
     @classmethod
     def validate(cls, require_onchain: bool = False):
         errors = []
@@ -194,6 +223,12 @@ class Config:
 
         if not cls.MODEL_DIR.strip():
             errors.append("MODEL_DIR is not set.")
+
+        if cls.DP_AGGREGATOR_EPSILON <= 0:
+            errors.append("DP_AGGREGATOR_EPSILON must be > 0.")
+
+        if not (0 < cls.DP_AGGREGATOR_DELTA < 0.5):
+            errors.append("DP_AGGREGATOR_DELTA must be in (0, 0.5).")
 
         if require_onchain:
             if not cls.LEDGERLENS_CONTRACT_ID.strip():
