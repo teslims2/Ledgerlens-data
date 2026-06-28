@@ -9,6 +9,7 @@ from detection.benford_engine import (
     observed_distribution,
     z_scores,
 )
+from tests.factories import make_clean_trades, make_wash_trades
 
 
 def test_leading_digits_basic():
@@ -24,17 +25,17 @@ def test_leading_digits_drops_nonpositive():
 
 
 def test_benford_conforming_sample_has_low_mad():
-    # Generate a large sample from a log-uniform distribution, which
-    # conforms closely to Benford's Law.
-    rng = np.random.default_rng(42)
-    amounts = pd.Series(10 ** rng.uniform(0, 4, size=20000))
+    # Use CleanTradeFactory which generates Benford-conforming amounts
+    trades = make_clean_trades(n=200)
+    amounts = pd.Series([t["base_amount"] for t in trades])
 
     assert mad_score(amounts) < 0.015
 
 
 def test_benford_round_numbers_are_nonconforming():
-    # Wash-trading-style fixed lot sizes concentrated on digit 5.
-    amounts = pd.Series([500] * 100 + [5000] * 100 + [50000] * 100)
+    # Use WashTradeFactory which generates round numbers (non-conforming)
+    trades = make_wash_trades(n=50)
+    amounts = pd.Series([t["base_amount"] for t in trades])
 
     assert mad_score(amounts) > 0.015
     assert chi_square_statistic(amounts) > 0
