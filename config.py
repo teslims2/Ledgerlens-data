@@ -182,6 +182,20 @@ class Config:
     GNN_HIDDEN_DIM: int = int(os.getenv("GNN_HIDDEN_DIM", "64"))
     GNN_NUM_LAYERS: int = int(os.getenv("GNN_NUM_LAYERS", "2"))
 
+    # CUSUM change-point detector (monitoring/cusum_detector.py)
+    # Target in-control mean of the risk score stream.
+    CUSUM_TARGET_MEAN: float = float(os.getenv("CUSUM_TARGET_MEAN", "30.0"))
+    # Allowable slack (k): typically half the minimum detectable shift.
+    # k = 5 targets a shift of 10 score points; gives in-control ARL ~500.
+    CUSUM_ALLOWABLE_SLACK: float = float(os.getenv("CUSUM_ALLOWABLE_SLACK", "5.0"))
+    # Decision threshold (h): crossing h triggers an alarm.
+    # h = 25 gives out-of-control ARL ~10 for a 10-point shift (σ≈15).
+    CUSUM_DECISION_THRESHOLD: float = float(os.getenv("CUSUM_DECISION_THRESHOLD", "25.0"))
+
+    # Platt scaling calibration (training/calibration.py)
+    CALIBRATION_SPLIT: float = float(os.getenv("CALIBRATION_SPLIT", "0.2"))
+    CALIBRATION_RANDOM_SEED: int = int(os.getenv("CALIBRATION_RANDOM_SEED", "42"))
+
     @classmethod
     def validate(cls, require_onchain: bool = False):
         errors = []
@@ -194,6 +208,11 @@ class Config:
 
         if not cls.MODEL_DIR.strip():
             errors.append("MODEL_DIR is not set.")
+
+        if cls.CUSUM_ALLOWABLE_SLACK < 0:
+            errors.append("CUSUM_ALLOWABLE_SLACK must be >= 0.")
+        if cls.CUSUM_DECISION_THRESHOLD <= 0:
+            errors.append("CUSUM_DECISION_THRESHOLD must be > 0.")
 
         if require_onchain:
             if not cls.LEDGERLENS_CONTRACT_ID.strip():
