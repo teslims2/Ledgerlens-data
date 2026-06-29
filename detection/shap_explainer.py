@@ -5,9 +5,17 @@ risk score can be accompanied by a per-feature attribution, surfaced via
 the API for auditors and end-users.
 """
 
+import numpy as np
 import pandas as pd
 import shap
 
+from config import config
+from detection.differential_privacy import (
+    feature_sensitivity,
+    gaussian_sigma,
+    load_shap_sensitivity,
+    renyi_noise_multiplier,
+)
 from detection.model_training import FEATURE_COLUMNS_EXCLUDE
 
 
@@ -66,6 +74,68 @@ class ShapExplainer:
             {"feature": name, "contribution": float(value), "value": float(raw)}
             for name, value, raw in contributions
         ]
+
+    def shap_dict(self, X: pd.DataFrame, model=None) -> dict[str, float]:
+        """Return exact ``{feature: contribution}`` for the single row in `X`."""
+        model = model or self.model
+        if model is None:
+            raise ValueError("No model provided to shap_dict()")
+
+        feature_cols = [c for c in X.columns if c not in FEATURE_COLUMNS_EXCLUDE]
+        X_features = X[feature_cols].astype(float)
+        values = self._shap_values_for(model, X_features)
+        return {col: float(v) for col, v in zip(feature_cols, values, strict=True)}
+
+    def explain_private(
+        self,
+        model,
+        X: pd.DataFrame,
+        wallet: str,
+        epsilon: float | None = None,
+        delta: float | None = None,
+        *,
+        private: bool = True,
+        sensitivities: dict | None = None,
+        query_store=None,
+        seed: int | None = None,
+    ) -> dict[str, float]:
+        """Return SHAP values with calibrated Gaussian noise for (epsilon, delta)-DP.
+
+        The Gaussian mechanism adds ``N(0, sigma_i^2)`` to each feature's SHAP
+        value, where ``sigma_i`` is derived from that feature's sensitivity
+        (max SHAP change from adding/removing one trade, see
+        `scripts/estimate_shap_sensitivity.py`). This makes individual trade
+        contributions indistinguishable, defeating model-inversion attacks.
+
+        Audit mode (`private=False`) returns the exact SHAP values unchanged and
+        consumes no privacy budget — intended for the authenticated, logged
+        internal audit API only.
+
+        When a `query_store` is supplied, the per-wallet query count is
+        incremented and Rényi composition scales `sigma` once the wallet exceeds
+        `config.DP_RENYI_QUERY_THRESHOLD` queries.
+        """
+        exact = self.shap_dict(X, model)
+        if not private:
+            return exact
+
+        epsilon = config.DP_EPSILON if epsilon is None else epsilon
+        delta = config.DP_DELTA if delta is None else delta
+        if sensitivities is None:
+            sensitivities = load_shap_sensitivity()
+
+        query_count = 0
+        if query_store is not None:
+            query_count = query_store.increment_shap_query(wallet)
+        noise_scale = renyi_noise_multiplier(query_count)
+
+        rng = np.random.default_rng(seed)
+        private_values: dict[str, float] = {}
+        for feature, value in exact.items():
+            sensitivity = feature_sensitivity(sensitivities, feature)
+            sigma = gaussian_sigma(sensitivity, epsilon, delta) * noise_scale
+            private_values[feature] = float(value + rng.normal(0.0, sigma))
+        return private_values
 
     def explain_ensemble(self, feature_row: pd.Series, models: dict, top_n: int = 5) -> list[dict]:
         """Aggregate per-model SHAP contributions across an ensemble into a

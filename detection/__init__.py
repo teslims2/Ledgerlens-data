@@ -1,3 +1,7 @@
-from .benford_engine import compute_benford_metrics
+from detection.benford_engine import compute_benford_metrics
+from detection.feature_engineering import build_feature_matrix
 
-__all__ = ["compute_benford_metrics"]
+__all__ = [
+    "build_feature_matrix",
+    "compute_benford_metrics",
+]
