@@ -48,6 +48,8 @@ torch>=2.0.0
 # WebSocket server (streaming/ws_server.py)
 websockets>=12.0
 
+# Kafka streaming (Issue #014: partition-based scaling)
+kafka-python>=2.0.2
 # Authentication
 python-jose>=3.3.0
 
@@ -63,6 +65,9 @@ cryptography>=42.0.0
 
 # Static type checking
 mypy>=1.10.0
+
+# Label quality estimation — confident learning (#271)
+cleanlab>=2.6.0
 
 # Testing
 pytest>=8.0.0
