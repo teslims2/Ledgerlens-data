@@ -11,6 +11,7 @@ statsmodels>=0.14.0
 
 # Machine learning
 scikit-learn>=1.4.0
+matplotlib>=3.8.0
 xgboost>=2.0.0
 lightgbm>=4.3.0
 imbalanced-learn>=0.12.0
