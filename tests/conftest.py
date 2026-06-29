@@ -1,16 +1,16 @@
-"""Pytest configuration and shared fixtures for the LedgerLens test suite."""
+"""Pytest configuration and shared fixtures."""
 
-import pytest
+import os
+import sys
+from pathlib import Path
 
-from tests.test_factories import synthetic_stellar_trades  # noqa: F401
+# Add project root to path for imports
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
-
-@pytest.fixture(autouse=True)
-def reset_random_state():
-    """Reset random seed before each test for reproducibility."""
-    import random
-    import numpy as np
-    
-    random.seed(42)
-    np.random.seed(42)
-    yield
+# Set environment variables for tests
+os.environ.setdefault("MODEL_DIR", "./models")
+os.environ.setdefault("RISK_SCORE_DB_URL", "sqlite:///:memory:")
+os.environ.setdefault("WATCHED_ASSET_PAIRS", "USDC:native,BTC:native,XLM:native")
+os.environ.setdefault("BENFORD_WINDOWS_HOURS", "1,4,24,168,720")
+os.environ.setdefault("MIN_TRADES_FOR_SCORING", "20")
