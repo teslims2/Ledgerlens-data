@@ -108,6 +108,8 @@ class CrossVenueAggregator:
             "base_amount": payload.get("base_amount"),
             "counter_amount": payload.get("counter_amount"),
             "pair_id": payload.get("pair_id"),
+            "base_asset": f"{payload.get('base_asset_code', '')}:{payload.get('base_asset_issuer', 'native')}",
+            "counter_asset": f"{payload.get('counter_asset_code', '')}:{payload.get('counter_asset_issuer', 'native')}",
         }
 
         pair_id = payload.get("pair_id")

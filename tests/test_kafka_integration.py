@@ -102,37 +102,52 @@ class TestWorkerProcessing:
     def test_worker_processes_message(self):
         """Worker correctly processes a single trade message."""
         from streaming.kafka_worker import KafkaWorker
-        from streaming.feature_buffer import FeatureBuffer, StreamingScorer
+        from streaming.feature_buffer import FeatureBuffer
+        from streaming.streaming_scorer import StreamingScorer
         from streaming.alert_dispatcher import AlertDispatcher
 
         buffer = FeatureBuffer()
+        
+        # Mock scorer to avoid issues with uninitialized _feature_cache
         scorer = Mock(spec=StreamingScorer)
         scorer.score_wallet = Mock(return_value=None)
         dispatcher = Mock(spec=AlertDispatcher)
 
-        worker = KafkaWorker(
-            topic="trades",
-            group_id="test-group",
-            buffer=buffer,
-            scorer=scorer,
-            dispatcher=dispatcher,
-        )
+        with patch("streaming.kafka_worker.KafkaConsumer"):
+            worker = KafkaWorker(
+                topic="trades",
+                group_id="test-group",
+                buffer=buffer,
+                scorer=scorer,
+                dispatcher=dispatcher,
+            )
 
-        # Create test message
-        payload = {
-            "trade_id": "123",
-            "ledger_close_time": "2024-01-01T00:00:00Z",
-            "base_account": "GA111",
-            "counter_account": "GA222",
-            "base_amount": 100.0,
-            "pair_id": "USDC:native/XLM:native",
-        }
+            # Create test message with valid datetime
+            payload = {
+                "trade_id": "123",
+                "ledger_close_time": "2024-01-01T00:00:00",
+                "base_account": "GA111",
+                "counter_account": "GA222",
+                "base_asset_code": "USDC",
+                "base_asset_issuer": "native",
+                "counter_asset_code": "XLM",
+                "counter_asset_issuer": "native",
+                "base_amount": 100.0,
+                "counter_amount": 200.0,
+                "price": 2.0,
+                "pair_id": "USDC:native/XLM:native",
+            }
 
-        # Process message
-        worker._process_message(payload)
+            # Process message
+            worker._process_message(payload)
 
-        # Verify buffer was updated
-        assert len(buffer._buffer.get("GA111", [])) > 0 or len(buffer._buffer.get("GA222", [])) > 0
+            # Verify buffer was updated (wallet_trade_count should be > 0)
+            count_ga111 = buffer.wallet_trade_count("GA111")
+            count_ga222 = buffer.wallet_trade_count("GA222")
+            assert count_ga111 > 0 or count_ga222 > 0
+            
+            # Verify scorer was called
+            assert scorer.score_wallet.call_count >= 1
 
     def test_worker_commits_offsets(self):
         """Worker commits offsets after processing."""

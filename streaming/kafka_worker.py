@@ -57,7 +57,8 @@ from typing import TYPE_CHECKING
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 
-from streaming.feature_buffer import FeatureBuffer, StreamingScorer
+from streaming.feature_buffer import FeatureBuffer
+from streaming.streaming_scorer import StreamingScorer
 from streaming.alert_dispatcher import AlertDispatcher
 from utils.logging import get_logger
 
@@ -207,33 +208,44 @@ class KafkaWorker:
         Args:
             payload: Trade event dict from Kafka
         """
-        # Reconstruct Trade-like object from payload
-        # (We don't have the full Trade class here, but the payload has the data)
-        trade_id = payload.get("trade_id")
-        base_account = payload.get("base_account")
-        counter_account = payload.get("counter_account")
-        pair_id = payload.get("pair_id")
+        from datetime import datetime
 
-        # Build minimal trade record for buffer
-        trade_record = {
-            "ledger_close_time": payload.get("ledger_close_time"),
-            "base_account": base_account,
-            "counter_account": counter_account,
-            "amount": payload.get("base_amount"),
-        }
+        from ingestion.data_models import Trade, Asset
 
-        # Update buffer for both accounts
-        for wallet in (base_account, counter_account):
-            self.buffer._buffer.setdefault(wallet, []).append(trade_record)
-            # Trim if needed
-            buf = self.buffer._buffer[wallet]
-            if len(buf) > self.buffer.max_trades_per_wallet:
-                self.buffer._buffer[wallet] = buf[-self.buffer.max_trades_per_wallet :]
+        # Reconstruct Trade object from payload
+        try:
+            trade = Trade(
+                trade_id=payload.get("trade_id", ""),
+                ledger_close_time=datetime.fromisoformat(
+                    payload.get("ledger_close_time", "2024-01-01T00:00:00")
+                ),
+                base_account=payload.get("base_account", ""),
+                counter_account=payload.get("counter_account", ""),
+                base_asset=Asset(
+                    code=payload.get("base_asset_code", ""),
+                    issuer=payload.get("base_asset_issuer"),
+                ),
+                counter_asset=Asset(
+                    code=payload.get("counter_asset_code", ""),
+                    issuer=payload.get("counter_asset_issuer"),
+                ),
+                base_amount=payload.get("base_amount", 0.0),
+                counter_amount=payload.get("counter_amount", 0.0),
+                price=payload.get("price", 0.0),
+            )
+        except Exception as exc:
+            logger.error("Failed to reconstruct Trade from payload: %s", exc)
+            return
 
-            # Score wallet if it has enough history
-            score = self.scorer.score_wallet(wallet)
+        # Update buffer
+        self.buffer.update(trade)
+        pair_id = payload.get("pair_id", "unknown")
+
+        # Score wallets
+        for wallet in (trade.base_account, trade.counter_account):
+            score = self.scorer.score_wallet(wallet, self.buffer)
             if score is not None:
-                self.dispatcher.dispatch(wallet, score, pair_id or "unknown")
+                self.dispatcher.dispatch(wallet, score, pair_id)
 
     def _commit_offsets(self) -> None:
         """Commit current offsets."""
